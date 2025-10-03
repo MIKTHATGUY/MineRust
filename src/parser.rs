@@ -1,8 +1,8 @@
 /// Parser module using nom for DataRust syntax
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while, take_until},
-    character::complete::{alpha1, char, digit1, multispace0, multispace1, line_ending},
+    bytes::complete::{tag, take_while},
+    character::complete::{alpha1, char, digit1, multispace0},
     combinator::{map, opt, recognize, value},
     multi::{many0, separated_list0},
     sequence::{delimited, pair, preceded, tuple},
@@ -13,38 +13,50 @@ use crate::ast::*;
 use crate::error::CompileError;
 
 /// Skip whitespace and comments
+/// Skip whitespace and comments
 fn ws(input: &str) -> IResult<&str, ()> {
-    let (mut input, _) = multispace0(input)?;
-    
-    loop {
-        // Try to parse a line comment
-        if let Ok((rest, _)) = preceded::<_, _, _, nom::error::Error<&str>, _, _>(
-            tag("//"), 
-            take_until("\n")
-        )(input) {
-            let (rest, _) = line_ending(rest)?;
-            let (rest, _) = multispace0(rest)?;
-            input = rest;
-            continue;
-        }
-        
-        // Try to parse a block comment
-        if let Ok((rest, _)) = delimited::<_, _, _, _, nom::error::Error<&str>, _, _, _>(
-            tag("/*"), 
-            take_until("*/"), 
-            tag("*/")
-        )(input) {
-            let (rest, _) = multispace0(rest)?;
-            input = rest;
-            continue;
-        }
-        
-        break;
-    }
-    
-    Ok((input, ()))
-}
+    let mut current = input;
 
+    loop {
+        let start = current;
+
+        // Consume whitespace
+        let (rest, _) = multispace0(current)?;
+        current = rest;
+
+        // Try to parse a line comment
+        if current.starts_with("//") {
+            // Skip until newline or end of input
+            if let Some(newline_pos) = current.find('\n') {
+                current = &current[newline_pos + 1..];
+            } else {
+                current = "";
+            }
+            continue; // Loop again to check for more whitespace/comments
+        }
+
+        // Try to parse a block comment
+        if current.starts_with("/*") {
+            if let Some(end_pos) = current.find("*/") {
+                current = &current[end_pos + 2..];
+                continue; // Loop again to check for more whitespace/comments
+            } else {
+                // Unclosed block comment
+                return Err(nom::Err::Error(nom::error::Error::new(
+                    current,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
+        }
+
+        // If no whitespace or comments were consumed, we're done
+        if current == start {
+            break;
+        }
+    }
+
+    Ok((current, ()))
+}
 /// Parse the entire DataRust program
 pub fn parse(input: &str) -> Result<Program, CompileError> {
     match program(input) {
@@ -83,25 +95,25 @@ fn item(input: &str) -> IResult<&str, Item> {
 /// Parse a function definition
 fn function(input: &str) -> IResult<&str, Function> {
     let (input, _) = tag("fn")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = ws(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, params) = delimited(
         char('('),
-        separated_list0(delimited(multispace0, char(','), multispace0), param),
+        separated_list0(delimited(ws, char(','), ws), param),
         char(')'),
     )(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, return_type) = opt(preceded(tuple((tag("->"), multispace0)), type_parser))(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
+    let (input, return_type) = opt(preceded(tuple((tag("->"), ws)), type_parser))(input)?;
+    let (input, _) = ws(input)?;
 
     // Parse body between curly braces
     let (input, body) = delimited(
         char('{'),
         |input| {
-            let (input, _) = multispace0(input)?;
-            let (input, exprs) = many0(preceded(multispace0, expr))(input)?;
-            let (input, _) = multispace0(input)?;
+            let (input, _) = ws(input)?;
+            let (input, exprs) = many0(preceded(ws, expr))(input)?;
+            let (input, _) = ws(input)?;
 
             let body = if exprs.len() == 1 {
                 exprs.into_iter().next().unwrap()
@@ -127,13 +139,13 @@ fn function(input: &str) -> IResult<&str, Function> {
 
 /// Parse a function parameter
 fn param(input: &str) -> IResult<&str, Param> {
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, _) = char(':')(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, ty) = type_parser(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
 
     Ok((
         input,
@@ -147,12 +159,12 @@ fn param(input: &str) -> IResult<&str, Param> {
 /// Parse a struct definition
 fn struct_def(input: &str) -> IResult<&str, StructDef> {
     let (input, _) = tag("struct")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = ws(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, fields) = delimited(
         char('{'),
-        separated_list0(delimited(multispace0, char(','), multispace0), field),
+        separated_list0(delimited(ws, char(','), ws), field),
         char('}'),
     )(input)?;
 
@@ -167,13 +179,13 @@ fn struct_def(input: &str) -> IResult<&str, StructDef> {
 
 /// Parse a struct field
 fn field(input: &str) -> IResult<&str, Field> {
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, _) = char(':')(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, ty) = type_parser(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
 
     Ok((
         input,
@@ -191,7 +203,7 @@ fn type_parser(input: &str) -> IResult<&str, Type> {
         map(
             tuple((
                 tag("fast"),
-                multispace1,
+                ws,
                 type_parser,
                 opt(delimited(char('<'), digit1, char('>'))),
             )),
@@ -217,9 +229,9 @@ fn type_parser(input: &str) -> IResult<&str, Type> {
         // Vec
         map(
             delimited(
-                tuple((tag("vec"), multispace0, char('<'), multispace0)),
+                tuple((tag("vec"), ws, char('<'), ws)),
                 type_parser,
-                tuple((multispace0, char('>'))),
+                tuple((ws, char('>'))),
             ),
             |ty| Type::Vec(Box::new(ty)),
         ),
@@ -236,14 +248,15 @@ fn expr(input: &str) -> IResult<&str, Expr> {
 /// Parse a let expression
 fn expr_let(input: &str) -> IResult<&str, Expr> {
     let (input, _) = tag("let")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = ws(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, ty) = opt(preceded(tuple((char(':'), multispace0)), type_parser))(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
+    let (input, ty) = opt(preceded(tuple((char(':'), ws)), type_parser))(input)?;
+    let (input, _) = ws(input)?;
     let (input, _) = char('=')(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, value) = expr(input)?;
+    let (input, _) = ws(input)?; // Consume trailing comments/whitespace
 
     Ok((
         input,
@@ -259,8 +272,8 @@ fn expr_let(input: &str) -> IResult<&str, Expr> {
 fn expr_block(input: &str) -> IResult<&str, Expr> {
     let (input, exprs) = delimited(
         char('{'),
-        many0(preceded(multispace0, expr)),
-        preceded(multispace0, char('}')),
+        many0(preceded(ws, expr)),
+        preceded(ws, char('}')),
     )(input)?;
 
     Ok((input, Expr::new(ExprKind::Block(exprs))))
@@ -269,12 +282,12 @@ fn expr_block(input: &str) -> IResult<&str, Expr> {
 /// Parse an if expression
 fn expr_if(input: &str) -> IResult<&str, Expr> {
     let (input, _) = tag("if")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = ws(input)?;
     let (input, condition) = expr(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?;
     let (input, then_branch) = expr(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, else_branch) = opt(preceded(tuple((tag("else"), multispace0)), expr))(input)?;
+    let (input, _) = ws(input)?;
+    let (input, else_branch) = opt(preceded(tuple((tag("else"), ws)), expr))(input)?;
 
     Ok((
         input,
@@ -290,8 +303,9 @@ fn expr_if(input: &str) -> IResult<&str, Expr> {
 fn expr_binary(input: &str) -> IResult<&str, Expr> {
     // Simplified: parse primary then optional operator + right side
     // TODO: Implement proper precedence climbing
+    let (input, _) = ws(input)?; // Consume leading whitespace/comments
     let (input, left) = expr_primary(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?; // Changed from multispace0 to ws
 
     // Try to parse operator
     let (input, op) = opt(alt((
@@ -303,7 +317,7 @@ fn expr_binary(input: &str) -> IResult<&str, Expr> {
     )))(input)?;
 
     if let Some(op) = op {
-        let (input, _) = multispace0(input)?;
+        let (input, _) = ws(input)?; // Changed from multispace0 to ws
         let (input, right) = expr(input)?;
         Ok((
             input,
@@ -320,6 +334,7 @@ fn expr_binary(input: &str) -> IResult<&str, Expr> {
 
 /// Parse a primary expression (literals, variables, calls, etc.)
 fn expr_primary(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = ws(input)?; // Consume leading whitespace/comments
     alt((
         expr_float_lit, // Must come before int_lit to properly parse floats
         expr_int_lit,
@@ -329,8 +344,8 @@ fn expr_primary(input: &str) -> IResult<&str, Expr> {
         expr_call_or_var,
         delimited(
             char('('),
-            preceded(multispace0, expr),
-            preceded(multispace0, char(')')),
+            preceded(ws, expr),
+            preceded(ws, char(')')),
         ),
     ))(input)
 }
@@ -349,7 +364,13 @@ fn expr_int_lit(input: &str) -> IResult<&str, Expr> {
         tag("u64"),
     )))(input)?;
 
-    let value = num.parse::<i64>().unwrap();
+    // Parse value - use i64 for signed, but store as string for large unsigned values
+    let value = num.parse::<i64>().unwrap_or_else(|_| {
+        // For values too large for i64, just use max i64 value
+        // The type checker will validate the range
+        i64::MAX
+    });
+    
     let ty = suffix.map(|s| match s {
         "i8" => Type::I8,
         "i16" => Type::I16,
@@ -425,12 +446,12 @@ fn expr_char_lit(input: &str) -> IResult<&str, Expr> {
 /// Parse function call or variable reference
 fn expr_call_or_var(input: &str) -> IResult<&str, Expr> {
     let (input, name) = identifier(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = ws(input)?; // Changed from multispace0 to ws
 
     // Check if it's a function call
     if let Ok((input, args)) = delimited(
         char('('),
-        separated_list0(delimited(multispace0, char(','), multispace0), expr),
+        separated_list0(delimited(ws, char(','), ws), expr),
         char(')'),
     )(input)
     {

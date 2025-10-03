@@ -1,0 +1,5 @@
+// Test comment
+
+fn test() {
+    let x: i32 = 42
+}

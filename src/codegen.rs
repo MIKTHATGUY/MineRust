@@ -91,62 +91,29 @@ impl CodeGen {
         commands: &mut Vec<String>,
     ) -> Result<String, CompileError> {
         match &expr.kind {
-            ExprKind::IntLit(val, explicit_ty) => {
-                // Store literal in a temporary scoreboard
+            ExprKind::IntLit(val, _explicit_ty) => {
+                // Return a literal marker that will be handled by Let/Assign
+                // For now, use a temp scoreboard for arithmetic contexts
                 let temp = self.get_temp();
                 commands.push(format!(
                     "scoreboard players set {} {}_temp {}",
                     temp, self.namespace, val
                 ));
-
-                // Apply overflow wrapping for small types if needed
-                if let Some(ty) = explicit_ty {
-                    self.apply_overflow_wrapping(&temp, ty, commands);
-                }
-
                 Ok(temp)
             }
 
-            ExprKind::FloatLit(val, explicit_ty) => {
-                // Check if this should be stored in fast storage (scaled int)
-                if let Some(ty_info) = &expr.ty {
-                    if let Type::Fast(_inner, Some(scale)) = ty_info {
-                        // Fast float: store as scaled integer in scoreboard
-                        let scaled_val = (val * (*scale as f64)) as i64;
-                        let temp = self.get_temp();
-                        commands.push(format!(
-                            "scoreboard players set {} {}_temp {}",
-                            temp, self.namespace, scaled_val
-                        ));
-                        return Ok(temp);
-                    }
-                }
-
-                // Regular NBT storage for floats
-                let temp = format!("temp_{}", self.temp_counter);
+            ExprKind::FloatLit(_val, _explicit_ty) => {
+                // Return a marker for NBT context
+                // For now, use a temp variable name
+                let temp = format!("float_temp_{}", self.temp_counter);
                 self.temp_counter += 1;
-
-                // Determine NBT type suffix
-                let suffix = match explicit_ty {
-                    Some(Type::F32) => "f",
-                    _ => "d", // f64 or default
-                };
-
-                commands.push(format!(
-                    "data modify storage {}:vars {} set value {}{}",
-                    self.namespace, temp, val, suffix
-                ));
                 Ok(temp)
             }
 
-            ExprKind::BoolLit(val) => {
-                let temp = self.get_temp();
-                commands.push(format!(
-                    "scoreboard players set {} {}_temp {}",
-                    temp,
-                    self.namespace,
-                    if *val { 1 } else { 0 }
-                ));
+            ExprKind::BoolLit(_val) => {
+                // Return a marker for NBT context
+                let temp = format!("bool_temp_{}", self.temp_counter);
+                self.temp_counter += 1;
                 Ok(temp)
             }
 
@@ -173,24 +140,225 @@ impl CodeGen {
             }
 
             ExprKind::Let { name, ty, value } => {
-                let value_var = self.generate_expr(value, commands)?;
-
-                // Determine storage type
-                if let Some(Type::Fast(_, _)) = ty {
+                // Check if this is a fast storage type
+                if let Some(Type::Fast(_inner_ty, scale)) = ty {
                     // Fast storage: use scoreboard
-                    let var_name = format!("#{}_{}", self.namespace, name);
-                    commands.push(format!(
-                        "scoreboard players operation {} {}_obj = {} {}_temp",
-                        var_name, self.namespace, value_var, self.namespace
-                    ));
-                    Ok(var_name)
+                    match &value.kind {
+                        ExprKind::IntLit(val, _) => {
+                            // Direct scoreboard set for integer literals
+                            let var_name = format!("#{}_{}", self.namespace, name);
+
+                            if let Some(scale_val) = scale {
+                                // Fast float with scaling
+                                let scaled = ((*val as f64) * (*scale_val as f64)) as i64;
+                                commands.push(format!(
+                                    "scoreboard players set {} {}_obj {}",
+                                    var_name, self.namespace, scaled
+                                ));
+                            } else {
+                                // Regular fast integer
+                                commands.push(format!(
+                                    "scoreboard players set {} {}_obj {}",
+                                    var_name, self.namespace, val
+                                ));
+                            }
+                            return Ok(var_name);
+                        }
+                        ExprKind::FloatLit(val, _) => {
+                            // Fast float: scale and store as integer
+                            let var_name = format!("#{}_{}", self.namespace, name);
+                            let scaled = if let Some(scale_val) = scale {
+                                (val * (*scale_val as f64)) as i64
+                            } else {
+                                *val as i64
+                            };
+                            commands.push(format!(
+                                "scoreboard players set {} {}_obj {}",
+                                var_name, self.namespace, scaled
+                            ));
+                            return Ok(var_name);
+                        }
+                        ExprKind::BoolLit(val) => {
+                            // Fast bool: 0 or 1 in scoreboard
+                            let var_name = format!("#{}_{}", self.namespace, name);
+                            commands.push(format!(
+                                "scoreboard players set {} {}_obj {}",
+                                var_name,
+                                self.namespace,
+                                if *val { 1 } else { 0 }
+                            ));
+                            return Ok(var_name);
+                        }
+                        _ => {
+                            // Complex expression or variable reference
+                            // Check if we're converting from NBT to fast with scaling
+                            match &value.kind {
+                                ExprKind::Var(var_name) => {
+                                    // Converting NBT variable to fast storage
+                                    let target_var = format!("#{}_{}", self.namespace, name);
+
+                                    if let Some(scale_val) = scale {
+                                        // Fast float conversion with scaling: use data get with scale
+                                        commands.push(format!(
+                                            "execute store result score {} {}_obj run data get storage {}:vars {} {}",
+                                            target_var, self.namespace, self.namespace, var_name, scale_val
+                                        ));
+                                    } else {
+                                        // Regular int/bool conversion
+                                        commands.push(format!(
+                                            "execute store result score {} {}_obj run data get storage {}:vars {}",
+                                            target_var, self.namespace, self.namespace, var_name
+                                        ));
+                                    }
+                                    return Ok(target_var);
+                                }
+                                _ => {
+                                    // Evaluate expression and copy to scoreboard
+                                    let value_var = self.generate_expr(value, commands)?;
+                                    let var_name = format!("#{}_{}", self.namespace, name);
+                                    commands.push(format!(
+                                        "scoreboard players operation {} {}_obj = {} {}_temp",
+                                        var_name, self.namespace, value_var, self.namespace
+                                    ));
+                                    return Ok(var_name);
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    // NBT storage - need to copy from scoreboard to NBT using execute store
-                    commands.push(format!(
-                        "execute store result storage {}:vars {} int 1 run scoreboard players get {} {}_temp",
-                        self.namespace, name, value_var, self.namespace
-                    ));
-                    Ok(name.clone())
+                    // NBT storage: use direct data modify for literals
+                    match &value.kind {
+                        ExprKind::IntLit(val, explicit_ty) => {
+                            // Determine NBT type suffix based on the variable's type or explicit literal type
+                            let nbt_suffix = if let Some(ty) = ty.as_ref().or(explicit_ty.as_ref())
+                            {
+                                match ty {
+                                    Type::I8 | Type::U8 => "b",   // Byte
+                                    Type::I16 | Type::U16 => "s", // Short
+                                    Type::I64 | Type::U64 => "L", // Long
+                                    _ => "",                      // Int (default, no suffix)
+                                }
+                            } else {
+                                "" // Default to Int
+                            };
+
+                            commands.push(format!(
+                                "data modify storage {}:vars {} set value {}{}",
+                                self.namespace, name, val, nbt_suffix
+                            ));
+                            return Ok(name.clone());
+                        }
+                        ExprKind::FloatLit(val, explicit_ty) => {
+                            // Determine float type suffix
+                            let nbt_suffix = if let Some(ty) = ty.as_ref().or(explicit_ty.as_ref())
+                            {
+                                match ty {
+                                    Type::F32 => "f", // Float
+                                    _ => "d",         // Double (default)
+                                }
+                            } else {
+                                "d" // Default to Double
+                            };
+
+                            commands.push(format!(
+                                "data modify storage {}:vars {} set value {}{}",
+                                self.namespace, name, val, nbt_suffix
+                            ));
+                            return Ok(name.clone());
+                        }
+                        ExprKind::BoolLit(val) => {
+                            // Bool as NBT Byte (0 or 1)
+                            commands.push(format!(
+                                "data modify storage {}:vars {} set value {}b",
+                                self.namespace,
+                                name,
+                                if *val { 1 } else { 0 }
+                            ));
+                            return Ok(name.clone());
+                        }
+                        ExprKind::StringLit(s) => {
+                            // String as NBT String
+                            commands.push(format!(
+                                "data modify storage {}:vars {} set value \"{}\"",
+                                self.namespace, name, s
+                            ));
+                            return Ok(name.clone());
+                        }
+                        ExprKind::CharLit(c) => {
+                            // Char as single-character NBT String
+                            commands.push(format!(
+                                "data modify storage {}:vars {} set value \"{}\"",
+                                self.namespace, name, c
+                            ));
+                            return Ok(name.clone());
+                        }
+                        _ => {
+                            // Complex expression or variable reference
+                            match &value.kind {
+                                ExprKind::Var(var_name) => {
+                                    // Check if source is a fast variable (starts with #)
+                                    if var_name.starts_with('#') {
+                                        // Converting fast to NBT
+                                        // Check if we need to scale down (fast float to regular float)
+                                        if let Some(value_ty) = &value.ty {
+                                            if let Type::Fast(_inner, Some(_scale_val)) = value_ty {
+                                                // Fast float to NBT float: divide by scale
+                                                // For now, store as-is (scaled integer)
+                                                // TODO: implement proper float conversion with division
+                                                commands.push(format!(
+                                                    "execute store result storage {}:vars {} int 1 run scoreboard players get {} {}_obj",
+                                                    self.namespace, name, var_name, self.namespace
+                                                ));
+                                            } else {
+                                                // Regular fast int/bool to NBT
+                                                commands.push(format!(
+                                                    "execute store result storage {}:vars {} int 1 run scoreboard players get {} {}_obj",
+                                                    self.namespace, name, var_name, self.namespace
+                                                ));
+                                            }
+                                        } else {
+                                            // No type info, assume regular conversion
+                                            commands.push(format!(
+                                                "execute store result storage {}:vars {} int 1 run scoreboard players get {} {}_obj",
+                                                self.namespace, name, var_name, self.namespace
+                                            ));
+                                        }
+                                    } else {
+                                        // NBT to NBT copy
+                                        commands.push(format!(
+                                            "data modify storage {}:vars {} set from storage {}:vars {}",
+                                            self.namespace, name, self.namespace, var_name
+                                        ));
+                                    }
+                                    return Ok(name.clone());
+                                }
+                                _ => {
+                                    // Evaluate expression then store
+                                    let value_var = self.generate_expr(value, commands)?;
+
+                                    // Determine the appropriate NBT type suffix
+                                    let nbt_type = if let Some(ty) = ty {
+                                        match ty {
+                                            Type::I8 | Type::U8 => "byte",
+                                            Type::I16 | Type::U16 => "short",
+                                            Type::I64 | Type::U64 => "long",
+                                            Type::F32 => "float",
+                                            Type::F64 => "double",
+                                            _ => "int",
+                                        }
+                                    } else {
+                                        "int"
+                                    };
+
+                                    commands.push(format!(
+                                        "execute store result storage {}:vars {} {} 1 run scoreboard players get {} {}_temp",
+                                        self.namespace, name, nbt_type, value_var, self.namespace
+                                    ));
+                                    return Ok(name.clone());
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

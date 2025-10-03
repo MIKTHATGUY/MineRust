@@ -9,8 +9,7 @@ fn add_and_scale(a: i32, b: fast i32) -> i32
 fn calc_distance(p1: Point, p2: Point) -> f64
     let dx = p1.x - p2.x
     let dy = p1.y - p2.y
-    (dx * dx + dy * dy).sqrt()  // Assume .sqrt() for floats
-
+    (dx * dx + dy * dy)
 fn main() -> i32
     // Basic arithmetic with NBT types
     let a: i32 = 5
