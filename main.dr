@@ -1,0 +1,36 @@
+
+// Test arithmetic operations, types, and storage in DataRust
+struct Point { x: f64, y: f64 }
+
+fn add_and_scale(a: i32, b: fast i32) -> i32
+    let temp = a + b  // Mixed NBT and fast
+    temp * 2
+
+fn calc_distance(p1: Point, p2: Point) -> f64
+    let dx = p1.x - p2.x
+    let dy = p1.y - p2.y
+    (dx * dx + dy * dy).sqrt()  // Assume .sqrt() for floats
+
+fn main() -> i32
+    // Basic arithmetic with NBT types
+    let a: i32 = 5
+    let b: fast i32 = 3
+    let c = add_and_scale(a, b)  // Should be (5 + 3) * 2 = 16
+
+    // Float operations
+    let p1 = Point { x: 3.0, y: 4.0 }
+    let p2 = Point { x: 0.0, y: 0.0 }
+    let dist: f64 = calc_distance(p1, p2)  // Should be 5.0
+
+    // Fast float (scaled)
+    let speed: fast f32<1000> = 2500  // Represents 2.5
+    let time: fast f32<1000> = 4000   // Represents 4.0
+    let fast_dist = speed * time / 1000  // Should be 10.0 (scaled)
+
+    // Test conversion (warning expected)
+    let small: i8 = c as i8  // Warn: Potential truncation
+
+    // Test error case (should fail compilation)
+    let big: fast i64 = 1000000  // Error: fast i64 unsupported
+
+    c  // Return 16
