@@ -342,11 +342,7 @@ fn expr_primary(input: &str) -> IResult<&str, Expr> {
         expr_char_lit,
         expr_string_lit,
         expr_call_or_var,
-        delimited(
-            char('('),
-            preceded(ws, expr),
-            preceded(ws, char(')')),
-        ),
+        delimited(char('('), preceded(ws, expr), preceded(ws, char(')'))),
     ))(input)
 }
 
@@ -370,7 +366,7 @@ fn expr_int_lit(input: &str) -> IResult<&str, Expr> {
         // The type checker will validate the range
         i64::MAX
     });
-    
+
     let ty = suffix.map(|s| match s {
         "i8" => Type::I8,
         "i16" => Type::I16,
