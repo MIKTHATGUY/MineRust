@@ -1,0 +1,13 @@
+fn test_primitives() {
+    let x: i8 = 42i8
+    let y: u8 = 255u8
+    let z: i32 = 1000
+    let w: fast i32 = 500
+    let pi: f32 = 3.14f32
+    let active: bool = true
+}
+
+fn main() {
+    let count: i32 = 0
+    let max: i32 = 100
+}

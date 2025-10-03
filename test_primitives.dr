@@ -1,0 +1,149 @@
+// DataRust Primitive Types Test File
+// This file demonstrates all primitive types with their literals and operations
+
+fn test_bool() {
+    // Boolean type - true/false
+    let flag: bool = true
+    let is_active: bool = false
+    
+    // Fast boolean for performance in loops
+    let fast_flag: fast bool = true
+}
+
+fn test_signed_integers() {
+    // i8: -128 to 127
+    let small: i8 = 42i8
+    let min_i8: i8 = -128i8
+    let max_i8: i8 = 127i8
+    
+    // Fast i8 for scoreboard operations
+    let fast_small: fast i8 = 100i8
+    
+    // i16: -32768 to 32767
+    let medium: i16 = 31415i16
+    let min_i16: i16 = -32768i16
+    let max_i16: i16 = 32767i16
+    
+    // i32: -2^31 to 2^31-1 (default integer type)
+    let count: i32 = 31415926i32
+    let implicit: i32 = 42
+    
+    // Fast i32 - native scoreboard type
+    let fast_count: fast i32 = 1000
+    
+    // i64: -2^63 to 2^63-1 (NBT only, no fast support)
+    let big: i64 = 31415926535i64
+}
+
+fn test_unsigned_integers() {
+    // u8: 0 to 255
+    let color: u8 = 255u8
+    let byte_val: u8 = 128u8
+    
+    // Fast u8
+    let fast_color: fast u8 = 200u8
+    
+    // u16: 0 to 65535
+    let index: u16 = 65535u16
+    let port: u16 = 8080u16
+    
+    // u32: 0 to 2^32-1
+    let large: u32 = 4294967295u32
+    
+    // u64: 0 to 2^64-1
+    let huge: u64 = 18446744073709551615u64
+}
+
+fn test_floats() {
+    // f32: 32-bit floating point
+    let pi32: f32 = 3.14f32
+    let speed: f32 = 2.5f32
+    
+    // Fast f32 with scale factor (for scoreboard operations)
+    let fast_speed: fast f32<1000> = 2.5f32
+    
+    // f64: 64-bit floating point (default float type)
+    let pi64: f64 = 3.1415926535f64
+    let distance = 123.456
+    
+    // Fast f64 with scale
+    let fast_dist: fast f64<1000> = 123.456
+}
+
+fn test_strings() {
+    // String type (NBT only)
+    let greeting: str = "Hello, DataRust!"
+    let name: str = "player"
+    
+    // String concatenation
+    let message = "Hello"
+}
+
+fn test_chars() {
+    // Character type (single character string)
+    let letter: char = 'A'
+    let digit: char = '5'
+    let symbol: char = '@'
+}
+
+fn test_arithmetic() {
+    // Integer arithmetic
+    let a: i32 = 10
+    let b: i32 = 20
+    let sum = a + b
+    let diff = a - b
+    let product = a * b
+    let quotient = a / b
+    let remainder = a % b
+    
+    // Float arithmetic
+    let x: f32 = 3.14f32
+    let y: f32 = 2.0f32
+    let result = x * y
+}
+
+fn test_overflow_wrapping() {
+    // i8 overflow: 127 + 1 should wrap to -128
+    let max_i8: i8 = 127i8
+    let wrapped = max_i8 + 1i8
+    
+    // u8 overflow: 255 + 1 should wrap to 0
+    let max_u8: u8 = 255u8
+    let wrapped_u8 = max_u8 + 1u8
+    
+    // i16 overflow demonstration
+    let max_i16: i16 = 32767i16
+    let wrapped_i16 = max_i16 + 1i16
+    
+    // u16 overflow demonstration
+    let max_u16: u16 = 65535u16
+    let wrapped_u16 = max_u16 + 1u16
+}
+
+fn test_type_casting() {
+    // Explicit type casting with 'as'
+    let int_val: i32 = 42
+    
+    // Potentially lossy casts (will generate warnings)
+    let small: i8 = 100i8
+    let big: i32 = 1000
+}
+
+fn test_mixed_operations() {
+    // Fast and NBT storage
+    let fast_val: fast i32 = 100
+    let nbt_val: i32 = 200
+    
+    // Type promotion in expressions
+    let int_val: i32 = 10
+    let float_val: f64 = 3.14
+}
+
+fn main() {
+    // Main function demonstrating basic usage
+    let count: fast i32 = 0
+    let max: i32 = 100
+    let pi: f32 = 3.14f32
+    let active: bool = true
+    let message: str = "DataRust initialized!"
+}

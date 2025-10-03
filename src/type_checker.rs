@@ -14,7 +14,11 @@ pub struct TypeChecker {
     warn_as_error: bool,
 }
 
-pub fn check(program: Program, _source: &str, warn_as_error: bool) -> Result<Program, CompileError> {
+pub fn check(
+    program: Program,
+    _source: &str,
+    warn_as_error: bool,
+) -> Result<Program, CompileError> {
     let mut checker = TypeChecker {
         variables: HashMap::new(),
         functions: HashMap::new(),
@@ -31,10 +35,8 @@ impl TypeChecker {
         for item in &program.items {
             if let Item::Function(func) = item {
                 let param_types = func.params.iter().map(|p| p.ty.clone()).collect();
-                self.functions.insert(
-                    func.name.clone(),
-                    (param_types, func.return_type.clone())
-                );
+                self.functions
+                    .insert(func.name.clone(), (param_types, func.return_type.clone()));
             }
         }
 
@@ -69,7 +71,7 @@ impl TypeChecker {
                         inner_ty
                     )));
                 }
-                
+
                 // Warn about fast floats
                 if inner_ty.is_float() {
                     self.warnings.push(CompileWarning::FastFloatApproximation {
@@ -78,7 +80,7 @@ impl TypeChecker {
                     });
                 }
             }
-            
+
             self.variables.insert(param.name.clone(), param.ty.clone());
         }
 
@@ -122,11 +124,11 @@ impl TypeChecker {
             ExprKind::StringLit(_) => Type::Str,
             ExprKind::CharLit(_) => Type::Char,
 
-            ExprKind::Var(name) => {
-                self.variables.get(name)
-                    .cloned()
-                    .ok_or_else(|| CompileError::VariableNotFound(name.clone()))?
-            }
+            ExprKind::Var(name) => self
+                .variables
+                .get(name)
+                .cloned()
+                .ok_or_else(|| CompileError::VariableNotFound(name.clone()))?,
 
             ExprKind::BinaryOp { op, left, right } => {
                 let left_ty = self.check_expr(left)?;
@@ -141,7 +143,7 @@ impl TypeChecker {
 
             ExprKind::Let { name, ty, value } => {
                 let value_ty = self.check_expr(value)?;
-                
+
                 let var_ty = if let Some(ty) = ty {
                     // Check if fast storage is compatible
                     if let Type::Fast(inner_ty, _) = ty {
@@ -151,22 +153,23 @@ impl TypeChecker {
                                 inner_ty
                             )));
                         }
-                        
+
                         // Check for unsupported types
                         match **inner_ty {
                             Type::I64 | Type::U64 => {
                                 return Err(CompileError::InvalidFastType(
-                                    "fast i64/u64 not supported; scoreboards are 32-bit".to_string()
+                                    "fast i64/u64 not supported; scoreboards are 32-bit"
+                                        .to_string(),
                                 ));
                             }
                             Type::Str | Type::Char => {
                                 return Err(CompileError::InvalidFastType(
-                                    "fast str/char not supported; use NBT storage".to_string()
+                                    "fast str/char not supported; use NBT storage".to_string(),
                                 ));
                             }
                             _ => {}
                         }
-                        
+
                         // Warn about fast floats
                         if inner_ty.is_float() {
                             self.warnings.push(CompileWarning::FastFloatApproximation {
@@ -175,7 +178,7 @@ impl TypeChecker {
                             });
                         }
                     }
-                    
+
                     // Check compatibility
                     if !self.types_compatible(&value_ty, ty) {
                         // Warn if lossy cast
@@ -192,43 +195,49 @@ impl TypeChecker {
                             )));
                         }
                     }
-                    
+
                     ty.clone()
                 } else {
                     value_ty
                 };
-                
+
                 self.variables.insert(name.clone(), var_ty.clone());
                 var_ty
             }
 
             ExprKind::Assign { target, value } => {
                 let value_ty = self.check_expr(value)?;
-                let var_ty = self.variables.get(target)
+                let var_ty = self
+                    .variables
+                    .get(target)
                     .ok_or_else(|| CompileError::VariableNotFound(target.clone()))?;
-                
+
                 if !self.types_compatible(&value_ty, var_ty) {
                     return Err(CompileError::TypeError(format!(
                         "Type mismatch in assignment: expected {:?}, got {:?}",
                         var_ty, value_ty
                     )));
                 }
-                
+
                 value_ty
             }
 
             ExprKind::Call { name, args } => {
-                let (param_types, return_ty) = self.functions.get(name)
+                let (param_types, return_ty) = self
+                    .functions
+                    .get(name)
                     .ok_or_else(|| CompileError::FunctionNotFound(name.clone()))?
                     .clone();
-                
+
                 if args.len() != param_types.len() {
                     return Err(CompileError::TypeError(format!(
                         "Function '{}' expects {} arguments, got {}",
-                        name, param_types.len(), args.len()
+                        name,
+                        param_types.len(),
+                        args.len()
                     )));
                 }
-                
+
                 for (arg, expected_ty) in args.iter_mut().zip(param_types.iter()) {
                     let arg_ty = self.check_expr(arg)?;
                     if !self.types_compatible(&arg_ty, expected_ty) {
@@ -238,13 +247,16 @@ impl TypeChecker {
                         )));
                     }
                 }
-                
+
                 return_ty.unwrap_or(Type::I32)
             }
 
-            ExprKind::Cast { expr: inner, target_ty } => {
+            ExprKind::Cast {
+                expr: inner,
+                target_ty,
+            } => {
                 let inner_ty = self.check_expr(inner)?;
-                
+
                 // Check if cast is valid
                 if !self.can_cast(&inner_ty, target_ty) {
                     return Err(CompileError::TypeError(format!(
@@ -252,7 +264,7 @@ impl TypeChecker {
                         inner_ty, target_ty
                     )));
                 }
-                
+
                 // Warn if lossy
                 if self.is_lossy_cast(&inner_ty, target_ty) {
                     self.warnings.push(CompileWarning::LossyCast {
@@ -261,7 +273,7 @@ impl TypeChecker {
                         line: 0,
                     });
                 }
-                
+
                 target_ty.clone()
             }
 
@@ -273,16 +285,20 @@ impl TypeChecker {
                 last_ty
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond_ty = self.check_expr(condition)?;
                 if cond_ty != Type::Bool {
                     return Err(CompileError::TypeError(
-                        "If condition must be bool".to_string()
+                        "If condition must be bool".to_string(),
                     ));
                 }
-                
+
                 let then_ty = self.check_expr(then_branch)?;
-                
+
                 if let Some(else_expr) = else_branch {
                     let else_ty = self.check_expr(else_expr)?;
                     if !self.types_compatible(&then_ty, &else_ty) {
@@ -292,13 +308,13 @@ impl TypeChecker {
                         )));
                     }
                 }
-                
+
                 then_ty
             }
 
             _ => {
                 return Err(CompileError::TypeError(
-                    "Unsupported expression type".to_string()
+                    "Unsupported expression type".to_string(),
                 ));
             }
         };
@@ -307,7 +323,12 @@ impl TypeChecker {
         Ok(ty)
     }
 
-    fn check_binary_op(&mut self, op: BinOp, left_ty: &Type, right_ty: &Type) -> Result<Type, CompileError> {
+    fn check_binary_op(
+        &mut self,
+        op: BinOp,
+        left_ty: &Type,
+        right_ty: &Type,
+    ) -> Result<Type, CompileError> {
         // Check if both types are numeric
         if !left_ty.is_numeric() || !right_ty.is_numeric() {
             return Err(CompileError::TypeError(format!(
@@ -333,7 +354,7 @@ impl TypeChecker {
             UnOp::Neg => {
                 if !ty.is_numeric() {
                     return Err(CompileError::TypeError(
-                        "Negation requires numeric type".to_string()
+                        "Negation requires numeric type".to_string(),
                     ));
                 }
                 Ok(ty.clone())
@@ -341,7 +362,7 @@ impl TypeChecker {
             UnOp::Not => {
                 if *ty != Type::Bool {
                     return Err(CompileError::TypeError(
-                        "Logical NOT requires bool type".to_string()
+                        "Logical NOT requires bool type".to_string(),
                     ));
                 }
                 Ok(Type::Bool)
@@ -408,16 +429,20 @@ impl TypeChecker {
             Type::U16 => val >= 0 && val <= 65535,
             Type::I32 => val >= i32::MIN as i64 && val <= i32::MAX as i64,
             Type::U32 => val >= 0 && val <= u32::MAX as i64,
-            Type::I64 => true, // i64 literal always fits in i64
+            Type::I64 => true,     // i64 literal always fits in i64
             Type::U64 => val >= 0, // u64 requires non-negative
-            _ => return Err(CompileError::TypeError(format!(
-                "Invalid integer type: {:?}", ty
-            ))),
+            _ => {
+                return Err(CompileError::TypeError(format!(
+                    "Invalid integer type: {:?}",
+                    ty
+                )))
+            }
         };
 
         if !valid {
             return Err(CompileError::TypeError(format!(
-                "Integer literal {} out of range for type {:?}", val, ty
+                "Integer literal {} out of range for type {:?}",
+                val, ty
             )));
         }
 

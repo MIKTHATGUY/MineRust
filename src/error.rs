@@ -75,7 +75,10 @@ impl CompileWarning {
                 )
             }
             CompileWarning::FastFloatApproximation { var, line } => {
-                format!("Line {}: Warning: Fast float '{}' uses approximation; precision may be lost", line, var)
+                format!(
+                    "Line {}: Warning: Fast float '{}' uses approximation; precision may be lost",
+                    line, var
+                )
             }
             CompileWarning::MixedStorage { line } => {
                 format!(

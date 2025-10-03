@@ -38,8 +38,14 @@ impl CodeGen {
             format!("scoreboard objectives add {}_temp dummy", self.namespace),
             format!("data merge storage {}:vars {{}}", self.namespace),
             "# Constants for overflow wrapping".to_string(),
-            format!("scoreboard players set #const256 {}_temp 256", self.namespace),
-            format!("scoreboard players set #const65536 {}_temp 65536", self.namespace),
+            format!(
+                "scoreboard players set #const256 {}_temp 256",
+                self.namespace
+            ),
+            format!(
+                "scoreboard players set #const65536 {}_temp 65536",
+                self.namespace
+            ),
         ];
         self.functions.insert("load".to_string(), load_commands);
 
@@ -57,23 +63,21 @@ impl CodeGen {
         // Assign unique ID to this function for isolated return address
         self.current_function_id = self.function_id_counter;
         self.function_id_counter += 1;
-        
+
         // Reset temp counter for each function to ensure isolation
         self.temp_counter = 0;
-        
-        let mut commands = vec![
-            format!("# Function: {} (ID: {})", func.name, self.current_function_id),
-        ];
+
+        let mut commands = vec![format!(
+            "# Function: {} (ID: {})",
+            func.name, self.current_function_id
+        )];
 
         // Generate function body
         let result_var = self.generate_expr(&func.body, &mut commands)?;
 
         // Store return value if needed
         if func.return_type.is_some() {
-            commands.push(format!(
-                "# Store return value from {}",
-                result_var
-            ));
+            commands.push(format!("# Store return value from {}", result_var));
             commands.push(self.store_return_value(&result_var));
         }
 
@@ -81,7 +85,11 @@ impl CodeGen {
         Ok(())
     }
 
-    fn generate_expr(&mut self, expr: &Expr, commands: &mut Vec<String>) -> Result<String, CompileError> {
+    fn generate_expr(
+        &mut self,
+        expr: &Expr,
+        commands: &mut Vec<String>,
+    ) -> Result<String, CompileError> {
         match &expr.kind {
             ExprKind::IntLit(val, explicit_ty) => {
                 // Store literal in a temporary scoreboard
@@ -90,12 +98,12 @@ impl CodeGen {
                     "scoreboard players set {} {}_temp {}",
                     temp, self.namespace, val
                 ));
-                
+
                 // Apply overflow wrapping for small types if needed
                 if let Some(ty) = explicit_ty {
                     self.apply_overflow_wrapping(&temp, ty, commands);
                 }
-                
+
                 Ok(temp)
             }
 
@@ -113,17 +121,17 @@ impl CodeGen {
                         return Ok(temp);
                     }
                 }
-                
+
                 // Regular NBT storage for floats
                 let temp = format!("temp_{}", self.temp_counter);
                 self.temp_counter += 1;
-                
+
                 // Determine NBT type suffix
                 let suffix = match explicit_ty {
                     Some(Type::F32) => "f",
                     _ => "d", // f64 or default
                 };
-                
+
                 commands.push(format!(
                     "data modify storage {}:vars {} set value {}{}",
                     self.namespace, temp, val, suffix
@@ -135,7 +143,9 @@ impl CodeGen {
                 let temp = self.get_temp();
                 commands.push(format!(
                     "scoreboard players set {} {}_temp {}",
-                    temp, self.namespace, if *val { 1 } else { 0 }
+                    temp,
+                    self.namespace,
+                    if *val { 1 } else { 0 }
                 ));
                 Ok(temp)
             }
@@ -164,11 +174,11 @@ impl CodeGen {
 
             ExprKind::Let { name, ty, value } => {
                 let value_var = self.generate_expr(value, commands)?;
-                
+
                 // Determine storage type
                 if let Some(Type::Fast(_, _)) = ty {
                     // Fast storage: use scoreboard
-                    let var_name = format!("#{}_{}",  self.namespace, name);
+                    let var_name = format!("#{}_{}", self.namespace, name);
                     commands.push(format!(
                         "scoreboard players operation {} {}_obj = {} {}_temp",
                         var_name, self.namespace, value_var, self.namespace
@@ -197,30 +207,31 @@ impl CodeGen {
                 for arg in args {
                     self.generate_expr(arg, commands)?;
                 }
-                
+
                 // Call function
-                commands.push(format!(
-                    "function {}:{}",
-                    self.namespace, name
-                ));
-                
+                commands.push(format!("function {}:{}", self.namespace, name));
+
                 // Return value is in function-specific return variable
                 let return_var = self.get_return_var(name);
-                
+
                 // Copy to a local temp to avoid conflicts if this result is used
                 let result_temp = self.get_temp();
                 commands.push(format!(
                     "scoreboard players operation {} {}_temp = {} {}_obj",
                     result_temp, self.namespace, return_var, self.namespace
                 ));
-                
+
                 Ok(result_temp)
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond_var = self.generate_expr(condition, commands)?;
                 let result_temp = self.get_temp();
-                
+
                 // Generate then branch
                 let mut then_commands = Vec::new();
                 let then_var = self.generate_expr(then_branch, &mut then_commands)?;
@@ -228,18 +239,16 @@ impl CodeGen {
                     "scoreboard players operation {} {}_temp = {} {}_temp",
                     result_temp, self.namespace, then_var, self.namespace
                 ));
-                
+
                 // Generate execute if
                 commands.push(format!(
                     "execute if score {} {}_temp matches 1 run function {}:if_then_{}",
                     cond_var, self.namespace, self.namespace, self.temp_counter
                 ));
-                self.functions.insert(
-                    format!("if_then_{}", self.temp_counter),
-                    then_commands
-                );
+                self.functions
+                    .insert(format!("if_then_{}", self.temp_counter), then_commands);
                 self.temp_counter += 1;
-                
+
                 // Generate else branch if present
                 if let Some(else_expr) = else_branch {
                     let mut else_commands = Vec::new();
@@ -248,26 +257,23 @@ impl CodeGen {
                         "scoreboard players operation {} {}_temp = {} {}_temp",
                         result_temp, self.namespace, else_var, self.namespace
                     ));
-                    
+
                     commands.push(format!(
                         "execute unless score {} {}_temp matches 1 run function {}:if_else_{}",
                         cond_var, self.namespace, self.namespace, self.temp_counter
                     ));
-                    self.functions.insert(
-                        format!("if_else_{}", self.temp_counter),
-                        else_commands
-                    );
+                    self.functions
+                        .insert(format!("if_else_{}", self.temp_counter), else_commands);
                     self.temp_counter += 1;
                 }
-                
+
                 Ok(result_temp)
             }
 
-            _ => {
-                Err(CompileError::CodegenError(
-                    format!("Unsupported expression: {:?}", expr.kind)
-                ))
-            }
+            _ => Err(CompileError::CodegenError(format!(
+                "Unsupported expression: {:?}",
+                expr.kind
+            ))),
         }
     }
 
@@ -276,19 +282,19 @@ impl CodeGen {
         op: BinOp,
         left: &Expr,
         right: &Expr,
-        commands: &mut Vec<String>
+        commands: &mut Vec<String>,
     ) -> Result<String, CompileError> {
         let left_var = self.generate_expr(left, commands)?;
         let right_var = self.generate_expr(right, commands)?;
-        
+
         let result = self.get_temp();
-        
+
         // Copy left to result
         commands.push(format!(
             "scoreboard players operation {} {}_temp = {} {}_temp",
             result, self.namespace, left_var, self.namespace
         ));
-        
+
         // Perform operation
         let op_symbol = match op {
             BinOp::Add => "+=",
@@ -297,22 +303,23 @@ impl CodeGen {
             BinOp::Div => "/=",
             BinOp::Mod => "%=",
             _ => {
-                return Err(CompileError::CodegenError(
-                    format!("Unsupported binary operation: {:?}", op)
-                ));
+                return Err(CompileError::CodegenError(format!(
+                    "Unsupported binary operation: {:?}",
+                    op
+                )));
             }
         };
-        
+
         commands.push(format!(
             "scoreboard players operation {} {}_temp {} {} {}_temp",
             result, self.namespace, op_symbol, right_var, self.namespace
         ));
-        
+
         // Apply overflow wrapping if the result type is a small integer
         if let Some(ty) = &left.ty {
             self.apply_overflow_wrapping(&result, ty, commands);
         }
-        
+
         Ok(result)
     }
 
@@ -322,7 +329,7 @@ impl CodeGen {
             Type::Fast(inner, _) => inner.as_ref(),
             _ => ty,
         };
-        
+
         match base_ty {
             Type::I8 => {
                 // i8: (-128..127) wrap with: +128, %256, -128
@@ -387,14 +394,14 @@ impl CodeGen {
             self.namespace, self.current_function_id, self.namespace, var, self.namespace
         )
     }
-    
+
     fn get_return_var(&self, function_name: &str) -> String {
         // When calling a function, reference its unique return address
         // For now, we'll use a hash of the function name for consistency
         let function_id = self.hash_function_name(function_name);
         format!("#{}_return_{}", self.namespace, function_id)
     }
-    
+
     fn hash_function_name(&self, name: &str) -> u32 {
         // Simple hash function to generate pseudo-random IDs from function names
         let mut hash: u32 = 5381;
