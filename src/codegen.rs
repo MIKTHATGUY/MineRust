@@ -76,9 +76,27 @@ impl CodeGen {
         let result_var = self.generate_expr(&func.body, &mut commands)?;
 
         // Store return value if needed
-        if func.return_type.is_some() {
+        if let Some(ref return_type) = func.return_type {
             commands.push(format!("# Store return value from {}", result_var));
-            commands.push(self.store_return_value(&result_var));
+            
+            // Determine if return type is fast or NBT
+            let is_fast_return = matches!(return_type, Type::Fast(_, _));
+            
+            if is_fast_return {
+                // Fast return: store in scoreboard
+                let return_var = format!("#{}_return", self.namespace);
+                commands.push(format!(
+                    "scoreboard players operation {} {}_obj = {} {}_temp",
+                    return_var, self.namespace, result_var, self.namespace
+                ));
+            } else {
+                // NBT return: determine appropriate NBT type
+                let nbt_type = self.get_nbt_type(return_type);
+                commands.push(format!(
+                    "execute store result storage {}:vars return {} 1 run scoreboard players get {} {}_temp",
+                    self.namespace, nbt_type, result_var, self.namespace
+                ));
+            }
         }
 
         self.functions.insert(func.name.clone(), commands);
@@ -114,6 +132,28 @@ impl CodeGen {
                 // Return a marker for NBT context
                 let temp = format!("bool_temp_{}", self.temp_counter);
                 self.temp_counter += 1;
+                Ok(temp)
+            }
+
+            ExprKind::StringLit(val) => {
+                // String literals stored in NBT
+                let temp = format!("str_temp_{}", self.temp_counter);
+                self.temp_counter += 1;
+                commands.push(format!(
+                    "data modify storage {}:vars {} set value \"{}\"",
+                    self.namespace, temp, val
+                ));
+                Ok(temp)
+            }
+
+            ExprKind::CharLit(val) => {
+                // Char literals stored as single-char strings in NBT
+                let temp = format!("char_temp_{}", self.temp_counter);
+                self.temp_counter += 1;
+                commands.push(format!(
+                    "data modify storage {}:vars {} set value \"{}\"",
+                    self.namespace, temp, val
+                ));
                 Ok(temp)
             }
 
@@ -371,7 +411,7 @@ impl CodeGen {
             }
 
             ExprKind::Call { name, args } => {
-                // Generate code for arguments
+                // Generate code for arguments (TODO: proper parameter passing)
                 for arg in args {
                     self.generate_expr(arg, commands)?;
                 }
@@ -379,14 +419,19 @@ impl CodeGen {
                 // Call function
                 commands.push(format!("function {}:{}", self.namespace, name));
 
-                // Return value is in function-specific return variable
-                let return_var = self.get_return_var(name);
-
-                // Copy to a local temp to avoid conflicts if this result is used
+                // Return value handling depends on the called function's return type
+                // For now, check if the return value is in fast or NBT storage
+                // We'll use a heuristic: check the global return variables
+                
+                // Try fast return first (scoreboard)
                 let result_temp = self.get_temp();
                 commands.push(format!(
-                    "scoreboard players operation {} {}_temp = {} {}_obj",
-                    result_temp, self.namespace, return_var, self.namespace
+                    "# Copy return value from function {}",
+                    name
+                ));
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp = #{}_return {}_obj",
+                    result_temp, self.namespace, self.namespace, self.namespace
                 ));
 
                 Ok(result_temp)
@@ -436,6 +481,140 @@ impl CodeGen {
                 }
 
                 Ok(result_temp)
+            }
+
+            ExprKind::Cast { expr, target_ty } => {
+                // Generate the source expression
+                let source_var = self.generate_expr(expr, commands)?;
+
+                // For most casts, we just need to copy the value and possibly apply overflow wrapping
+                // The actual type conversion is handled by NBT or scoreboard operations
+                let result = self.get_temp();
+
+                // Copy source to result
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp = {} {}_temp",
+                    result, self.namespace, source_var, self.namespace
+                ));
+
+                // Apply overflow wrapping for the target type if it's a small integer
+                self.apply_overflow_wrapping(&result, target_ty, commands);
+
+                Ok(result)
+            }
+
+            ExprKind::As { selector, body } => {
+                // Generate body commands
+                let mut body_commands = Vec::new();
+                let result_var = self.generate_expr(body, &mut body_commands)?;
+                
+                // Store result in temp before wrapping in execute
+                let final_result = self.get_temp();
+                body_commands.push(format!(
+                    "scoreboard players operation {} {}_temp = {} {}_temp",
+                    final_result, self.namespace, result_var, self.namespace
+                ));
+                
+                // Create a helper function for the body
+                let helper_name = format!("as_helper_{}", self.temp_counter);
+                self.temp_counter += 1;
+                self.functions.insert(helper_name.clone(), body_commands);
+                
+                // Generate selector string
+                let selector_str = match selector {
+                    SelectorOrString::Selector(sel) => self.generate_selector(sel),
+                    SelectorOrString::String(s) => s.clone(),
+                };
+                
+                // Generate execute as command
+                commands.push(format!(
+                    "execute as {} run function {}:{}",
+                    selector_str, self.namespace, helper_name
+                ));
+                
+                Ok(final_result)
+            }
+
+            ExprKind::At { position, body } => {
+                // Generate body commands
+                let mut body_commands = Vec::new();
+                let result_var = self.generate_expr(body, &mut body_commands)?;
+                
+                // Store result in temp before wrapping in execute
+                let final_result = self.get_temp();
+                body_commands.push(format!(
+                    "scoreboard players operation {} {}_temp = {} {}_temp",
+                    final_result, self.namespace, result_var, self.namespace
+                ));
+                
+                // Create a helper function for the body
+                let helper_name = format!("at_helper_{}", self.temp_counter);
+                self.temp_counter += 1;
+                self.functions.insert(helper_name.clone(), body_commands);
+                
+                // Generate position string
+                let pos_str = match position {
+                    Position::Relative(coords) => coords.clone(),
+                    Position::Absolute(x, y, z) => format!("{} {} {}", x, y, z),
+                    Position::Struct(name) => {
+                        // TODO: Load struct coordinates - for now use placeholder
+                        format!("~ ~ ~  # TODO: load from {}", name)
+                    }
+                };
+                
+                // Generate execute at command
+                commands.push(format!(
+                    "execute positioned {} run function {}:{}",
+                    pos_str, self.namespace, helper_name
+                ));
+                
+                Ok(final_result)
+            }
+
+            ExprKind::AsAt { selector, body } => {
+                // Generate body commands
+                let mut body_commands = Vec::new();
+                let result_var = self.generate_expr(body, &mut body_commands)?;
+                
+                // Store result in temp before wrapping in execute
+                let final_result = self.get_temp();
+                body_commands.push(format!(
+                    "scoreboard players operation {} {}_temp = {} {}_temp",
+                    final_result, self.namespace, result_var, self.namespace
+                ));
+                
+                // Create a helper function for the body
+                let helper_name = format!("asat_helper_{}", self.temp_counter);
+                self.temp_counter += 1;
+                self.functions.insert(helper_name.clone(), body_commands);
+                
+                // Generate selector string
+                let selector_str = match selector {
+                    SelectorOrString::Selector(sel) => self.generate_selector(sel),
+                    SelectorOrString::String(s) => s.clone(),
+                };
+                
+                // Generate execute as at command
+                commands.push(format!(
+                    "execute as {} at @s run function {}:{}",
+                    selector_str, self.namespace, helper_name
+                ));
+                
+                Ok(final_result)
+            }
+
+            ExprKind::Selector(selector) => {
+                // Generate Minecraft selector string
+                let selector_str = self.generate_selector(selector);
+                
+                // Store selector as a string temp (for use in commands)
+                let temp = format!("selector_temp_{}", self.temp_counter);
+                self.temp_counter += 1;
+                commands.push(format!("# Selector: {}", selector_str));
+                
+                // Return a marker that can be used later
+                // In practice, selectors are used inline in commands, not stored
+                Ok(temp)
             }
 
             _ => Err(CompileError::CodegenError(format!(
@@ -555,27 +734,100 @@ impl CodeGen {
         temp
     }
 
-    fn store_return_value(&self, var: &str) -> String {
-        // Use function-specific return address to avoid conflicts
-        format!(
-            "scoreboard players operation #{}_return_{} {}_obj = {} {}_temp",
-            self.namespace, self.current_function_id, self.namespace, var, self.namespace
-        )
-    }
-
-    fn get_return_var(&self, function_name: &str) -> String {
-        // When calling a function, reference its unique return address
-        // For now, we'll use a hash of the function name for consistency
-        let function_id = self.hash_function_name(function_name);
-        format!("#{}_return_{}", self.namespace, function_id)
-    }
-
-    fn hash_function_name(&self, name: &str) -> u32 {
-        // Simple hash function to generate pseudo-random IDs from function names
-        let mut hash: u32 = 5381;
-        for c in name.bytes() {
-            hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
+    fn get_nbt_type(&self, ty: &Type) -> &str {
+        match ty {
+            Type::I8 | Type::U8 => "byte",
+            Type::I16 | Type::U16 => "short",
+            Type::I64 | Type::U64 => "long",
+            Type::F32 => "float",
+            Type::F64 => "double",
+            Type::Str => "string",
+            Type::Fast(inner, _) => self.get_nbt_type(inner),
+            _ => "int",
         }
-        hash % 100000 // Keep it reasonably sized
+    }
+
+    fn generate_selector(&self, selector: &Selector) -> String {
+        use crate::ast::{SelectorTarget, SelectorFilter, SortType};
+
+        // Map target to Minecraft selector base
+        let base = match selector.target {
+            SelectorTarget::AllPlayers => "@a",
+            SelectorTarget::NearestPlayer => "@p",
+            SelectorTarget::RandomPlayer => "@r",
+            SelectorTarget::SelfTarget => "@s",
+            SelectorTarget::Entities => "@e",
+        };
+
+        if selector.filters.is_empty() {
+            return base.to_string();
+        }
+
+        // Build filter string
+        let mut filter_parts = Vec::new();
+
+        for filter in &selector.filters {
+            match filter {
+                SelectorFilter::Type(entity_type) => {
+                    filter_parts.push(format!("type={}", entity_type));
+                }
+                SelectorFilter::Name(name) => {
+                    filter_parts.push(format!("name={}", name));
+                }
+                SelectorFilter::Distance(range) => {
+                    filter_parts.push(format!("distance={}", self.format_range(range)));
+                }
+                SelectorFilter::X(val) => {
+                    filter_parts.push(format!("x={}", val));
+                }
+                SelectorFilter::Y(val) => {
+                    filter_parts.push(format!("y={}", val));
+                }
+                SelectorFilter::Z(val) => {
+                    filter_parts.push(format!("z={}", val));
+                }
+                SelectorFilter::DX(val) => {
+                    filter_parts.push(format!("dx={}", val));
+                }
+                SelectorFilter::DY(val) => {
+                    filter_parts.push(format!("dy={}", val));
+                }
+                SelectorFilter::DZ(val) => {
+                    filter_parts.push(format!("dz={}", val));
+                }
+                SelectorFilter::Pitch(range) => {
+                    filter_parts.push(format!("x_rotation={}", self.format_range(range)));
+                }
+                SelectorFilter::Yaw(range) => {
+                    filter_parts.push(format!("y_rotation={}", self.format_range(range)));
+                }
+                SelectorFilter::Limit(limit) => {
+                    filter_parts.push(format!("limit={}", limit));
+                }
+                SelectorFilter::Sort(sort_type) => {
+                    let sort_str = match sort_type {
+                        SortType::Nearest => "nearest",
+                        SortType::Furthest => "furthest",
+                        SortType::Random => "random",
+                        SortType::Arbitrary => "arbitrary",
+                    };
+                    filter_parts.push(format!("sort={}", sort_str));
+                }
+                SelectorFilter::Predicate(pred) => {
+                    filter_parts.push(format!("predicate={}", pred));
+                }
+            }
+        }
+
+        format!("{}[{}]", base, filter_parts.join(","))
+    }
+
+    fn format_range(&self, range: &RangeValue) -> String {
+        match range {
+            RangeValue::Exact(val) => val.to_string(),
+            RangeValue::Range(start, end) => format!("{}..{}", start, end),
+            RangeValue::UpTo(end) => format!("..{}", end),
+            RangeValue::From(start) => format!("{}..", start),
+        }
     }
 }

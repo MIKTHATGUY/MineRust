@@ -223,6 +223,23 @@ pub enum ExprKind {
         else_branch: Option<Box<Expr>>,
     },
 
+    // Execution contexts (as per specification)
+    As {
+        selector: SelectorOrString,
+        body: Box<Expr>,
+    },
+    At {
+        position: Position,
+        body: Box<Expr>,
+    },
+    AsAt {
+        selector: SelectorOrString,
+        body: Box<Expr>,
+    },
+
+    // Selector expression (new Rust-like syntax)
+    Selector(Selector),
+
     // Struct literal
     StructLit {
         name: String,
@@ -243,6 +260,71 @@ pub enum ExprKind {
         expr: Box<Expr>,
         index: Box<Expr>,
     },
+}
+
+/// Position for `at` execution context
+#[derive(Debug, Clone, PartialEq)]
+pub enum Position {
+    Relative(String), // e.g., "~ ~ ~", "~10 ~5 ~-3"
+    Absolute(i32, i32, i32),
+    Struct(String), // Reference to Pos struct variable
+}
+
+/// Selector for Minecraft entity targeting
+#[derive(Debug, Clone, PartialEq)]
+pub struct Selector {
+    pub target: SelectorTarget,
+    pub filters: Vec<SelectorFilter>,
+}
+
+/// Wrapper for selector or legacy string selector
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectorOrString {
+    Selector(Selector),
+    String(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SelectorTarget {
+    AllPlayers,    // @a
+    NearestPlayer, // @p
+    RandomPlayer,  // @r
+    SelfTarget,    // @s (renamed to avoid keyword conflict)
+    Entities,      // @e
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectorFilter {
+    Type(String),         // ty = cow
+    Name(String),         // name = "Bob"
+    Distance(RangeValue), // dist = 5..10
+    X(f64),               // x = 100
+    Y(f64),               // y = 64
+    Z(f64),               // z = -200
+    DX(f64),              // dx = 10
+    DY(f64),              // dy = 5
+    DZ(f64),              // dz = 15
+    Pitch(RangeValue),    // pitch = 0..45 (x_rotation)
+    Yaw(RangeValue),      // yaw = -90..90 (y_rotation)
+    Limit(u32),           // limit = 1
+    Sort(SortType),       // sort = nearest
+    Predicate(String),    // pred = my_namespace:static_predicate
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RangeValue {
+    Exact(f64),      // 5
+    Range(f64, f64), // 5..10
+    UpTo(f64),       // ..10
+    From(f64),       // 5..
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SortType {
+    Nearest,
+    Furthest,
+    Random,
+    Arbitrary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

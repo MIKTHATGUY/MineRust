@@ -1,0 +1,7 @@
+// Test that selectors work like macros (compile-time only)
+
+fn test_valid_selector() {
+    // This should work - selector in execution context
+    as sel::AllPlayers { dist = ..10 } {
+    }
+}

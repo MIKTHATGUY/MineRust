@@ -312,6 +312,28 @@ impl TypeChecker {
                 then_ty
             }
 
+            ExprKind::As { selector: _, body } => {
+                // Execution context - type check the body
+                self.check_expr(body)?
+            }
+
+            ExprKind::At { position: _, body } => {
+                // Execution context - type check the body
+                self.check_expr(body)?
+            }
+
+            ExprKind::AsAt { selector: _, body } => {
+                // Execution context - type check the body
+                self.check_expr(body)?
+            }
+
+            ExprKind::Selector(_) => {
+                // Selectors are compile-time only and cannot be used as values
+                return Err(CompileError::TypeError(
+                    "Selectors can only be used in execution contexts (as/at/asat), not as values".to_string(),
+                ));
+            }
+
             _ => {
                 return Err(CompileError::TypeError(
                     "Unsupported expression type".to_string(),
@@ -329,8 +351,12 @@ impl TypeChecker {
         left_ty: &Type,
         right_ty: &Type,
     ) -> Result<Type, CompileError> {
+        // Unwrap Fast types for comparison
+        let left_base = self.unwrap_fast_type(left_ty);
+        let right_base = self.unwrap_fast_type(right_ty);
+
         // Check if both types are numeric
-        if !left_ty.is_numeric() || !right_ty.is_numeric() {
+        if !left_base.is_numeric() || !right_base.is_numeric() {
             return Err(CompileError::TypeError(format!(
                 "Binary operation {:?} requires numeric types, got {:?} and {:?}",
                 op, left_ty, right_ty
@@ -412,13 +438,39 @@ impl TypeChecker {
     }
 
     fn promote_types(&self, left: &Type, right: &Type) -> Type {
-        // Promote to float if either is float
-        if left.is_float() || right.is_float() {
-            return Type::F64;
-        }
+        // Unwrap Fast types
+        let left_base = self.unwrap_fast_type(left);
+        let right_base = self.unwrap_fast_type(right);
 
-        // Otherwise, promote to larger int type (simplified: always i32)
-        Type::I32
+        // Preserve Fast wrapper if either type is Fast
+        let is_fast = matches!(left, Type::Fast(_, _)) || matches!(right, Type::Fast(_, _));
+
+        // Get scale from Fast types (prefer left's scale)
+        let scale = match (left, right) {
+            (Type::Fast(_, scale), _) => *scale,
+            (_, Type::Fast(_, scale)) => *scale,
+            _ => None,
+        };
+
+        // Promote to float if either is float
+        let result_base = if left_base.is_float() || right_base.is_float() {
+            // Prefer f64 for precision
+            if matches!(left_base, Type::F64) || matches!(right_base, Type::F64) {
+                Type::F64
+            } else {
+                Type::F32
+            }
+        } else {
+            // Otherwise, promote to larger int type (simplified: always i32)
+            Type::I32
+        };
+
+        // Wrap in Fast if needed
+        if is_fast {
+            Type::Fast(Box::new(result_base), scale)
+        } else {
+            result_base
+        }
     }
 
     fn validate_int_literal(&self, val: i64, ty: &Type) -> Result<(), CompileError> {
@@ -446,6 +498,129 @@ impl TypeChecker {
             )));
         }
 
+        Ok(())
+    }
+
+    fn unwrap_fast_type<'a>(&self, ty: &'a Type) -> &'a Type {
+        match ty {
+            Type::Fast(inner, _) => inner.as_ref(),
+            _ => ty,
+        }
+    }
+
+    fn validate_selector(&mut self, selector: &Selector) -> Result<(), CompileError> {
+        use crate::ast::{SelectorFilter, RangeValue};
+
+        for filter in &selector.filters {
+            match filter {
+                SelectorFilter::Limit(limit) => {
+                    if *limit == 0 {
+                        return Err(CompileError::TypeError(
+                            "Selector limit must be a positive integer".to_string()
+                        ));
+                    }
+                }
+                SelectorFilter::Pitch(range) => {
+                    // Validate pitch is in [-90, 90]
+                    self.validate_rotation_range(range, -90.0, 90.0, "pitch")?;
+                }
+                SelectorFilter::Yaw(range) => {
+                    // Validate yaw is in [-180, 180]
+                    self.validate_rotation_range(range, -180.0, 180.0, "yaw")?;
+                }
+                SelectorFilter::Type(entity_type) => {
+                    // Could validate against known entity types, but we'll trust the user for now
+                    if entity_type.is_empty() {
+                        return Err(CompileError::TypeError(
+                            "Entity type cannot be empty".to_string()
+                        ));
+                    }
+                }
+                SelectorFilter::Distance(range) => {
+                    // Distance should be non-negative
+                    match range {
+                        RangeValue::Exact(val) | RangeValue::UpTo(val) | RangeValue::From(val) => {
+                            if *val < 0.0 {
+                                self.warnings.push(CompileWarning::SlowParsing {
+                                    message: "Negative distance values may cause unexpected behavior".to_string(),
+                                    line: 0,
+                                });
+                            }
+                        }
+                        RangeValue::Range(start, end) => {
+                            if *start < 0.0 || *end < 0.0 {
+                                self.warnings.push(CompileWarning::SlowParsing {
+                                    message: "Negative distance values may cause unexpected behavior".to_string(),
+                                    line: 0,
+                                });
+                            }
+                            if start > end {
+                                return Err(CompileError::TypeError(
+                                    "Invalid distance range: start must be <= end".to_string()
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {} // Other filters are always valid
+            }
+        }
+
+        // Warn about potentially broad selectors
+        let has_limit = selector.filters.iter().any(|f| matches!(f, SelectorFilter::Limit(_)));
+        let has_distance = selector.filters.iter().any(|f| matches!(f, SelectorFilter::Distance(_)));
+        
+        if !has_limit && !has_distance && matches!(selector.target, crate::ast::SelectorTarget::Entities) {
+            self.warnings.push(CompileWarning::SlowParsing {
+                message: "Broad selector without limit or distance filter may impact performance".to_string(),
+                line: 0,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_rotation_range(&self, range: &RangeValue, min: f64, max: f64, name: &str) -> Result<(), CompileError> {
+        match range {
+            RangeValue::Exact(val) => {
+                if *val < min || *val > max {
+                    return Err(CompileError::TypeError(format!(
+                        "{} must be in range [{}, {}], got {}",
+                        name, min, max, val
+                    )));
+                }
+            }
+            RangeValue::Range(start, end) => {
+                if *start < min || *start > max || *end < min || *end > max {
+                    return Err(CompileError::TypeError(format!(
+                        "{} range [{}, {}] exceeds valid bounds [{}, {}]",
+                        name, start, end, min, max
+                    )));
+                }
+                if start > end {
+                    return Err(CompileError::TypeError(format!(
+                        "Invalid {} range: start must be <= end",
+                        name
+                    )));
+                }
+            }
+            RangeValue::UpTo(val) => {
+                if *val < min || *val > max {
+                    return Err(CompileError::TypeError(format!(
+                        "{} upper bound must be in range [{}, {}], got {}",
+                        name, min, max, val
+                    )));
+                }
+            }
+            RangeValue::From(val) => {
+                if *val < min || *val > max {
+                    return Err(CompileError::TypeError(format!(
+                        "{} lower bound must be in range [{}, {}], got {}",
+                        name, min, max, val
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -1,0 +1,17 @@
+// Simple selector test
+
+fn test1() {
+    let players = sel::AllPlayers {}
+}
+
+fn test2() {
+    let cows = sel::Entities { ty = cow }
+}
+
+fn test3() {
+    let nearby = sel::AllPlayers { dist = ..10 }
+}
+
+fn main() {
+    let s = sel::NearestPlayer {}
+}

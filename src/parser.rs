@@ -242,7 +242,16 @@ fn type_parser(input: &str) -> IResult<&str, Type> {
 
 /// Parse an expression
 fn expr(input: &str) -> IResult<&str, Expr> {
-    alt((expr_let, expr_block, expr_if, expr_binary))(input)
+    alt((
+        expr_let,
+        expr_selector,
+        expr_as,
+        expr_at,
+        expr_asat,
+        expr_block,
+        expr_if,
+        expr_binary,
+    ))(input)
 }
 
 /// Parse a let expression
@@ -266,6 +275,128 @@ fn expr_let(input: &str) -> IResult<&str, Expr> {
             value: Box::new(value),
         }),
     ))
+}
+
+/// Parse an 'as' execution context
+fn expr_as(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = tag("as")(input)?;
+    let (input, _) = ws(input)?;
+
+    // Try to parse a selector first (sel::Target)
+    if let Ok((remaining, selector_expr)) = expr_selector(input) {
+        // Extract the selector from the expression
+        if let ExprKind::Selector(selector) = selector_expr.kind {
+            let (input, _) = ws(remaining)?;
+            let (input, body) = expr_block(input)?;
+
+            return Ok((
+                input,
+                Expr::new(ExprKind::As {
+                    selector: SelectorOrString::Selector(selector),
+                    body: Box::new(body),
+                }),
+            ));
+        }
+    }
+
+    // Fall back to old string selector parsing
+    let (input, selector) = parse_selector(input)?;
+    let (input, _) = ws(input)?;
+    let (input, body) = expr_block(input)?;
+
+    Ok((
+        input,
+        Expr::new(ExprKind::As {
+            selector: SelectorOrString::String(selector.to_string()),
+            body: Box::new(body),
+        }),
+    ))
+}
+
+/// Parse an 'asat' execution context
+fn expr_asat(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = tag("asat")(input)?;
+    let (input, _) = ws(input)?;
+
+    // Try to parse a selector first (sel::Target)
+    if let Ok((remaining, selector_expr)) = expr_selector(input) {
+        // Extract the selector from the expression
+        if let ExprKind::Selector(selector) = selector_expr.kind {
+            let (input, _) = ws(remaining)?;
+            let (input, body) = expr_block(input)?;
+
+            return Ok((
+                input,
+                Expr::new(ExprKind::AsAt {
+                    selector: SelectorOrString::Selector(selector),
+                    body: Box::new(body),
+                }),
+            ));
+        }
+    }
+
+    // Fall back to old string selector parsing
+    let (input, selector) = parse_selector(input)?;
+    let (input, _) = ws(input)?;
+    let (input, body) = expr_block(input)?;
+
+    Ok((
+        input,
+        Expr::new(ExprKind::AsAt {
+            selector: SelectorOrString::String(selector.to_string()),
+            body: Box::new(body),
+        }),
+    ))
+}
+
+/// Parse an 'at' execution context
+fn expr_at(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = tag("at")(input)?;
+    let (input, _) = ws(input)?;
+    let (input, position) = parse_position(input)?;
+    let (input, _) = ws(input)?;
+    let (input, body) = expr_block(input)?;
+
+    Ok((
+        input,
+        Expr::new(ExprKind::At {
+            position,
+            body: Box::new(body),
+        }),
+    ))
+}
+
+/// Parse a Minecraft selector (e.g., @p, @e[type=cow])
+fn parse_selector(input: &str) -> IResult<&str, &str> {
+    recognize(pair(
+        char('@'),
+        pair(
+            alpha1,
+            opt(delimited(char('['), take_while(|c| c != ']'), char(']'))),
+        ),
+    ))(input)
+}
+
+/// Parse a position (relative coordinates, struct reference, etc.)
+fn parse_position(input: &str) -> IResult<&str, Position> {
+    alt((
+        // Relative coordinates like ~ ~ ~, ~10 ~5 ~-3
+        map(
+            recognize(tuple((
+                tag("~"),
+                opt(recognize(pair(opt(char('-')), digit1))),
+                ws,
+                tag("~"),
+                opt(recognize(pair(opt(char('-')), digit1))),
+                ws,
+                tag("~"),
+                opt(recognize(pair(opt(char('-')), digit1))),
+            ))),
+            |s: &str| Position::Relative(s.to_string()),
+        ),
+        // Struct reference (e.g., Pos { x: 0, y: 64, z: 0 })
+        map(identifier, |name: &str| Position::Struct(name.to_string())),
+    ))(input)
 }
 
 /// Parse a block expression
@@ -299,13 +430,26 @@ fn expr_if(input: &str) -> IResult<&str, Expr> {
     ))
 }
 
-/// Parse a binary operation (arithmetic)
+/// Parse a binary operation (arithmetic) or cast
 fn expr_binary(input: &str) -> IResult<&str, Expr> {
     // Simplified: parse primary then optional operator + right side
     // TODO: Implement proper precedence climbing
     let (input, _) = ws(input)?; // Consume leading whitespace/comments
     let (input, left) = expr_primary(input)?;
     let (input, _) = ws(input)?; // Changed from multispace0 to ws
+
+    // Check for 'as' keyword (type cast)
+    if let Ok((input, _)) = tag::<_, _, nom::error::Error<&str>>("as")(input) {
+        let (input, _) = ws(input)?;
+        let (input, target_ty) = type_parser(input)?;
+        return Ok((
+            input,
+            Expr::new(ExprKind::Cast {
+                expr: Box::new(left),
+                target_ty,
+            }),
+        ));
+    }
 
     // Try to parse operator
     let (input, op) = opt(alt((
@@ -468,5 +612,153 @@ fn identifier(input: &str) -> IResult<&str, &str> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         take_while(|c: char| c.is_alphanumeric() || c == '_'),
+    ))(input)
+}
+
+/// Parse a selector expression: sel::Target { filters }
+fn expr_selector(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = tag("sel")(input)?;
+    let (input, _) = tag("::")(input)?;
+    let (input, target) = selector_target(input)?;
+    let (input, _) = ws(input)?;
+    let (input, filters) = delimited(
+        char('{'),
+        |input| {
+            let (input, _) = ws(input)?;
+            let (input, filters) =
+                separated_list0(delimited(ws, char(','), ws), selector_filter)(input)?;
+            let (input, _) = ws(input)?;
+            // Allow optional trailing .. or comma
+            let (input, _) = opt(alt((tag(".."), tag(","))))(input)?;
+            let (input, _) = ws(input)?;
+            Ok((input, filters))
+        },
+        char('}'),
+    )(input)?;
+
+    Ok((
+        input,
+        Expr::new(ExprKind::Selector(Selector { target, filters })),
+    ))
+}
+
+/// Parse selector target: AllPlayers | NearestPlayer | RandomPlayer | Self | Entities
+fn selector_target(input: &str) -> IResult<&str, SelectorTarget> {
+    alt((
+        value(SelectorTarget::AllPlayers, tag("AllPlayers")),
+        value(SelectorTarget::NearestPlayer, tag("NearestPlayer")),
+        value(SelectorTarget::RandomPlayer, tag("RandomPlayer")),
+        value(SelectorTarget::SelfTarget, tag("Self")),
+        value(SelectorTarget::Entities, tag("Entities")),
+    ))(input)
+}
+
+/// Parse a selector filter: key = value
+fn selector_filter(input: &str) -> IResult<&str, SelectorFilter> {
+    let (input, _) = ws(input)?;
+    let (input, key) = identifier(input)?;
+    let (input, _) = ws(input)?;
+    let (input, _) = char('=')(input)?;
+    let (input, _) = ws(input)?;
+
+    match key {
+        "ty" => {
+            let (input, entity_type) = identifier(input)?;
+            Ok((input, SelectorFilter::Type(entity_type.to_string())))
+        }
+        "name" => {
+            let (input, name) = delimited(char('"'), take_while(|c| c != '"'), char('"'))(input)?;
+            Ok((input, SelectorFilter::Name(name.to_string())))
+        }
+        "dist" => {
+            let (input, range) = parse_range(input)?;
+            Ok((input, SelectorFilter::Distance(range)))
+        }
+        "x" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::X(val)))
+        }
+        "y" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::Y(val)))
+        }
+        "z" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::Z(val)))
+        }
+        "dx" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::DX(val)))
+        }
+        "dy" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::DY(val)))
+        }
+        "dz" => {
+            let (input, val) = parse_number(input)?;
+            Ok((input, SelectorFilter::DZ(val)))
+        }
+        "pitch" => {
+            let (input, range) = parse_range(input)?;
+            Ok((input, SelectorFilter::Pitch(range)))
+        }
+        "yaw" => {
+            let (input, range) = parse_range(input)?;
+            Ok((input, SelectorFilter::Yaw(range)))
+        }
+        "limit" => {
+            let (input, val) = digit1(input)?;
+            let limit = val.parse().unwrap();
+            Ok((input, SelectorFilter::Limit(limit)))
+        }
+        "sort" => {
+            let (input, sort_type) = alt((
+                value(SortType::Nearest, tag("nearest")),
+                value(SortType::Furthest, tag("furthest")),
+                value(SortType::Random, tag("random")),
+                value(SortType::Arbitrary, tag("arbitrary")),
+            ))(input)?;
+            Ok((input, SelectorFilter::Sort(sort_type)))
+        }
+        "pred" => {
+            // Parse namespace:path format
+            let (input, pred) = recognize(tuple((identifier, char(':'), identifier)))(input)?;
+            Ok((input, SelectorFilter::Predicate(pred.to_string())))
+        }
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+/// Parse a number (integer or float)
+fn parse_number(input: &str) -> IResult<&str, f64> {
+    let (input, num_str) = recognize(tuple((
+        opt(char('-')),
+        digit1,
+        opt(tuple((char('.'), digit1))),
+    )))(input)?;
+    let value = num_str.parse().unwrap();
+    Ok((input, value))
+}
+
+/// Parse a range: 5 | 5..10 | ..10 | 5..
+fn parse_range(input: &str) -> IResult<&str, RangeValue> {
+    alt((
+        // ..10 (up to)
+        map(preceded(tag(".."), parse_number), |end| {
+            RangeValue::UpTo(end)
+        }),
+        // 5..10 or 5.. (range or from)
+        map(
+            tuple((parse_number, tag(".."), opt(parse_number))),
+            |(start, _, end)| match end {
+                Some(e) => RangeValue::Range(start, e),
+                None => RangeValue::From(start),
+            },
+        ),
+        // 5 (exact)
+        map(parse_number, |val| RangeValue::Exact(val)),
     ))(input)
 }

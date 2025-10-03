@@ -1,0 +1,194 @@
+// DataRust Selector Test - Rust-like sel::Target { filters } syntax
+
+// ===== Test 1: Basic selectors without filters =====
+
+fn test_all_players() {
+    let players = sel::AllPlayers {}
+}
+
+fn test_nearest_player() {
+    let player = sel::NearestPlayer {}
+}
+
+fn test_random_player() {
+    let player = sel::RandomPlayer {}
+}
+
+fn test_self() {
+    let me = sel::Self {}
+}
+
+fn test_all_entities() {
+    let entities = sel::Entities {}
+}
+
+// ===== Test 2: Type filter =====
+
+fn test_entity_type() {
+    let cows = sel::Entities { ty = cow }
+    let zombies = sel::Entities { ty = zombie }
+    let players = sel::Entities { ty = player }
+}
+
+// ===== Test 3: Distance filters =====
+
+fn test_distance_exact() {
+    let close_players = sel::AllPlayers { dist = 10 }
+}
+
+fn test_distance_range() {
+    let mid_range = sel::AllPlayers { dist = 5..20 }
+}
+
+fn test_distance_up_to() {
+    let nearby = sel::Entities { dist = ..15 }
+}
+
+fn test_distance_from() {
+    let far_away = sel::Entities { dist = 50.. }
+}
+
+// ===== Test 4: Position filters =====
+
+fn test_coordinates() {
+    let at_spawn = sel::Entities {
+        ty = cow,
+        x = 0,
+        y = 64,
+        z = 0,
+        ..
+    }
+}
+
+fn test_volume() {
+    let in_box = sel::Entities {
+        ty = zombie,
+        x = 100,
+        y = 70,
+        z = -200,
+        dx = 50,
+        dy = 20,
+        dz = 50,
+        ..
+    }
+}
+
+// ===== Test 5: Rotation filters =====
+
+fn test_pitch() {
+    let looking_up = sel::AllPlayers { pitch = -90..-45 }
+    let looking_down = sel::AllPlayers { pitch = 45..90 }
+}
+
+fn test_yaw() {
+    let facing_north = sel::AllPlayers { yaw = -10..10 }
+    let facing_east = sel::AllPlayers { yaw = -100..-80 }
+}
+
+// ===== Test 6: Limit and sort =====
+
+fn test_limit() {
+    let one_player = sel::AllPlayers { limit = 1 }
+    let three_cows = sel::Entities { ty = cow, limit = 3 }
+}
+
+fn test_sort() {
+    let nearest = sel::Entities { ty = cow, sort = nearest, limit = 1 }
+    let furthest = sel::AllPlayers { sort = furthest, limit = 1 }
+    let random = sel::Entities { sort = random, limit = 5 }
+}
+
+// ===== Test 7: Name filter =====
+
+fn test_named_entity() {
+    let bob = sel::AllPlayers { name = "Bob" }
+    let alice = sel::Entities { name = "Alice", ty = player }
+}
+
+// ===== Test 8: Predicate filter =====
+
+fn test_predicate() {
+    let filtered = sel::Entities {
+        ty = cow,
+        pred = my_datapack:cow_filter,
+        limit = 5,
+        ..
+    }
+}
+
+// ===== Test 9: Complex combinations =====
+
+fn test_complex_1() {
+    let result = sel::Entities {
+        ty = zombie,
+        x = 0,
+        y = 70,
+        z = 0,
+        dx = 10,
+        dy = 5,
+        dz = 15,
+        pitch = 0..45,
+        dist = ..100,
+        limit = 10,
+        sort = nearest,
+        ..
+    }
+}
+
+fn test_complex_2() {
+    let result = sel::AllPlayers {
+        name = "TestPlayer",
+        yaw = -180..180,
+        pitch = -90..90,
+        dist = 5..50,
+        x = 100,
+        y = 64,
+        z = -100,
+        limit = 1,
+        ..
+    }
+}
+
+// ===== Test 10: Use with execution contexts =====
+
+fn test_with_as() {
+    as sel::AllPlayers { dist = ..20 } {
+        let count: fast i32 = 42
+        count
+    }
+}
+
+fn test_with_asat() {
+    asat sel::Entities { ty = cow, limit = 5 } {
+        let x: fast i32 = 100
+        x
+    }
+}
+
+// ===== Test 11: Main function demonstrating usage =====
+
+fn main() {
+    // Simple selector usage
+    let all_players = sel::AllPlayers {}
+    let nearby_cows = sel::Entities { ty = cow, dist = ..10 }
+    
+    // Complex selector
+    let zombies_in_box = sel::Entities {
+        ty = zombie,
+        x = 0,
+        y = 70,
+        z = 0,
+        dx = 20,
+        dy = 10,
+        dz = 20,
+        limit = 5,
+        sort = nearest,
+        ..
+    }
+    
+    // With execution context
+    as sel::NearestPlayer {} {
+        let greeting: str = "Hello!"
+        greeting
+    }
+}
