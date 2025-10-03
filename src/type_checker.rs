@@ -330,7 +330,8 @@ impl TypeChecker {
             ExprKind::Selector(_) => {
                 // Selectors are compile-time only and cannot be used as values
                 return Err(CompileError::TypeError(
-                    "Selectors can only be used in execution contexts (as/at/asat), not as values".to_string(),
+                    "Selectors can only be used in execution contexts (as/at/asat), not as values"
+                        .to_string(),
                 ));
             }
 
@@ -509,14 +510,14 @@ impl TypeChecker {
     }
 
     fn validate_selector(&mut self, selector: &Selector) -> Result<(), CompileError> {
-        use crate::ast::{SelectorFilter, RangeValue};
+        use crate::ast::{RangeValue, SelectorFilter};
 
         for filter in &selector.filters {
             match filter {
                 SelectorFilter::Limit(limit) => {
                     if *limit == 0 {
                         return Err(CompileError::TypeError(
-                            "Selector limit must be a positive integer".to_string()
+                            "Selector limit must be a positive integer".to_string(),
                         ));
                     }
                 }
@@ -532,7 +533,7 @@ impl TypeChecker {
                     // Could validate against known entity types, but we'll trust the user for now
                     if entity_type.is_empty() {
                         return Err(CompileError::TypeError(
-                            "Entity type cannot be empty".to_string()
+                            "Entity type cannot be empty".to_string(),
                         ));
                     }
                 }
@@ -542,7 +543,9 @@ impl TypeChecker {
                         RangeValue::Exact(val) | RangeValue::UpTo(val) | RangeValue::From(val) => {
                             if *val < 0.0 {
                                 self.warnings.push(CompileWarning::SlowParsing {
-                                    message: "Negative distance values may cause unexpected behavior".to_string(),
+                                    message:
+                                        "Negative distance values may cause unexpected behavior"
+                                            .to_string(),
                                     line: 0,
                                 });
                             }
@@ -550,13 +553,15 @@ impl TypeChecker {
                         RangeValue::Range(start, end) => {
                             if *start < 0.0 || *end < 0.0 {
                                 self.warnings.push(CompileWarning::SlowParsing {
-                                    message: "Negative distance values may cause unexpected behavior".to_string(),
+                                    message:
+                                        "Negative distance values may cause unexpected behavior"
+                                            .to_string(),
                                     line: 0,
                                 });
                             }
                             if start > end {
                                 return Err(CompileError::TypeError(
-                                    "Invalid distance range: start must be <= end".to_string()
+                                    "Invalid distance range: start must be <= end".to_string(),
                                 ));
                             }
                         }
@@ -567,12 +572,22 @@ impl TypeChecker {
         }
 
         // Warn about potentially broad selectors
-        let has_limit = selector.filters.iter().any(|f| matches!(f, SelectorFilter::Limit(_)));
-        let has_distance = selector.filters.iter().any(|f| matches!(f, SelectorFilter::Distance(_)));
-        
-        if !has_limit && !has_distance && matches!(selector.target, crate::ast::SelectorTarget::Entities) {
+        let has_limit = selector
+            .filters
+            .iter()
+            .any(|f| matches!(f, SelectorFilter::Limit(_)));
+        let has_distance = selector
+            .filters
+            .iter()
+            .any(|f| matches!(f, SelectorFilter::Distance(_)));
+
+        if !has_limit
+            && !has_distance
+            && matches!(selector.target, crate::ast::SelectorTarget::Entities)
+        {
             self.warnings.push(CompileWarning::SlowParsing {
-                message: "Broad selector without limit or distance filter may impact performance".to_string(),
+                message: "Broad selector without limit or distance filter may impact performance"
+                    .to_string(),
                 line: 0,
             });
         }
@@ -580,7 +595,13 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn validate_rotation_range(&self, range: &RangeValue, min: f64, max: f64, name: &str) -> Result<(), CompileError> {
+    fn validate_rotation_range(
+        &self,
+        range: &RangeValue,
+        min: f64,
+        max: f64,
+        name: &str,
+    ) -> Result<(), CompileError> {
         match range {
             RangeValue::Exact(val) => {
                 if *val < min || *val > max {

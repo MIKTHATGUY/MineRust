@@ -78,10 +78,10 @@ impl CodeGen {
         // Store return value if needed
         if let Some(ref return_type) = func.return_type {
             commands.push(format!("# Store return value from {}", result_var));
-            
+
             // Determine if return type is fast or NBT
             let is_fast_return = matches!(return_type, Type::Fast(_, _));
-            
+
             if is_fast_return {
                 // Fast return: store in scoreboard
                 let return_var = format!("#{}_return", self.namespace);
@@ -422,13 +422,10 @@ impl CodeGen {
                 // Return value handling depends on the called function's return type
                 // For now, check if the return value is in fast or NBT storage
                 // We'll use a heuristic: check the global return variables
-                
+
                 // Try fast return first (scoreboard)
                 let result_temp = self.get_temp();
-                commands.push(format!(
-                    "# Copy return value from function {}",
-                    name
-                ));
+                commands.push(format!("# Copy return value from function {}", name));
                 commands.push(format!(
                     "scoreboard players operation {} {}_temp = #{}_return {}_obj",
                     result_temp, self.namespace, self.namespace, self.namespace
@@ -507,31 +504,31 @@ impl CodeGen {
                 // Generate body commands
                 let mut body_commands = Vec::new();
                 let result_var = self.generate_expr(body, &mut body_commands)?;
-                
+
                 // Store result in temp before wrapping in execute
                 let final_result = self.get_temp();
                 body_commands.push(format!(
                     "scoreboard players operation {} {}_temp = {} {}_temp",
                     final_result, self.namespace, result_var, self.namespace
                 ));
-                
+
                 // Create a helper function for the body
                 let helper_name = format!("as_helper_{}", self.temp_counter);
                 self.temp_counter += 1;
                 self.functions.insert(helper_name.clone(), body_commands);
-                
+
                 // Generate selector string
                 let selector_str = match selector {
                     SelectorOrString::Selector(sel) => self.generate_selector(sel),
                     SelectorOrString::String(s) => s.clone(),
                 };
-                
+
                 // Generate execute as command
                 commands.push(format!(
                     "execute as {} run function {}:{}",
                     selector_str, self.namespace, helper_name
                 ));
-                
+
                 Ok(final_result)
             }
 
@@ -539,19 +536,19 @@ impl CodeGen {
                 // Generate body commands
                 let mut body_commands = Vec::new();
                 let result_var = self.generate_expr(body, &mut body_commands)?;
-                
+
                 // Store result in temp before wrapping in execute
                 let final_result = self.get_temp();
                 body_commands.push(format!(
                     "scoreboard players operation {} {}_temp = {} {}_temp",
                     final_result, self.namespace, result_var, self.namespace
                 ));
-                
+
                 // Create a helper function for the body
                 let helper_name = format!("at_helper_{}", self.temp_counter);
                 self.temp_counter += 1;
                 self.functions.insert(helper_name.clone(), body_commands);
-                
+
                 // Generate position string
                 let pos_str = match position {
                     Position::Relative(coords) => coords.clone(),
@@ -561,13 +558,13 @@ impl CodeGen {
                         format!("~ ~ ~  # TODO: load from {}", name)
                     }
                 };
-                
+
                 // Generate execute at command
                 commands.push(format!(
                     "execute positioned {} run function {}:{}",
                     pos_str, self.namespace, helper_name
                 ));
-                
+
                 Ok(final_result)
             }
 
@@ -575,43 +572,43 @@ impl CodeGen {
                 // Generate body commands
                 let mut body_commands = Vec::new();
                 let result_var = self.generate_expr(body, &mut body_commands)?;
-                
+
                 // Store result in temp before wrapping in execute
                 let final_result = self.get_temp();
                 body_commands.push(format!(
                     "scoreboard players operation {} {}_temp = {} {}_temp",
                     final_result, self.namespace, result_var, self.namespace
                 ));
-                
+
                 // Create a helper function for the body
                 let helper_name = format!("asat_helper_{}", self.temp_counter);
                 self.temp_counter += 1;
                 self.functions.insert(helper_name.clone(), body_commands);
-                
+
                 // Generate selector string
                 let selector_str = match selector {
                     SelectorOrString::Selector(sel) => self.generate_selector(sel),
                     SelectorOrString::String(s) => s.clone(),
                 };
-                
+
                 // Generate execute as at command
                 commands.push(format!(
                     "execute as {} at @s run function {}:{}",
                     selector_str, self.namespace, helper_name
                 ));
-                
+
                 Ok(final_result)
             }
 
             ExprKind::Selector(selector) => {
                 // Generate Minecraft selector string
                 let selector_str = self.generate_selector(selector);
-                
+
                 // Store selector as a string temp (for use in commands)
                 let temp = format!("selector_temp_{}", self.temp_counter);
                 self.temp_counter += 1;
                 commands.push(format!("# Selector: {}", selector_str));
-                
+
                 // Return a marker that can be used later
                 // In practice, selectors are used inline in commands, not stored
                 Ok(temp)
@@ -748,7 +745,7 @@ impl CodeGen {
     }
 
     fn generate_selector(&self, selector: &Selector) -> String {
-        use crate::ast::{SelectorTarget, SelectorFilter, SortType};
+        use crate::ast::{SelectorFilter, SelectorTarget, SortType};
 
         // Map target to Minecraft selector base
         let base = match selector.target {
