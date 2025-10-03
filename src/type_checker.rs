@@ -100,8 +100,24 @@ impl TypeChecker {
 
     fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, CompileError> {
         let ty = match &mut expr.kind {
-            ExprKind::IntLit(_) => Type::I32,
-            ExprKind::FloatLit(_) => Type::F64,
+            ExprKind::IntLit(val, explicit_ty) => {
+                if let Some(ty) = explicit_ty {
+                    // Validate the literal fits in the specified type
+                    self.validate_int_literal(*val, ty)?;
+                    ty.clone()
+                } else {
+                    // Default to i32
+                    Type::I32
+                }
+            }
+            ExprKind::FloatLit(_, explicit_ty) => {
+                if let Some(ty) = explicit_ty {
+                    ty.clone()
+                } else {
+                    // Default to f64
+                    Type::F64
+                }
+            }
             ExprKind::BoolLit(_) => Type::Bool,
             ExprKind::StringLit(_) => Type::Str,
             ExprKind::CharLit(_) => Type::Char,
@@ -382,5 +398,29 @@ impl TypeChecker {
 
         // Otherwise, promote to larger int type (simplified: always i32)
         Type::I32
+    }
+
+    fn validate_int_literal(&self, val: i64, ty: &Type) -> Result<(), CompileError> {
+        let valid = match ty {
+            Type::I8 => val >= -128 && val <= 127,
+            Type::U8 => val >= 0 && val <= 255,
+            Type::I16 => val >= -32768 && val <= 32767,
+            Type::U16 => val >= 0 && val <= 65535,
+            Type::I32 => val >= i32::MIN as i64 && val <= i32::MAX as i64,
+            Type::U32 => val >= 0 && val <= u32::MAX as i64,
+            Type::I64 => true, // i64 literal always fits in i64
+            Type::U64 => val >= 0, // u64 requires non-negative
+            _ => return Err(CompileError::TypeError(format!(
+                "Invalid integer type: {:?}", ty
+            ))),
+        };
+
+        if !valid {
+            return Err(CompileError::TypeError(format!(
+                "Integer literal {} out of range for type {:?}", val, ty
+            )));
+        }
+
+        Ok(())
     }
 }

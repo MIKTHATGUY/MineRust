@@ -288,9 +288,10 @@ fn expr_binary(input: &str) -> IResult<&str, Expr> {
 /// Parse a primary expression (literals, variables, calls, etc.)
 fn expr_primary(input: &str) -> IResult<&str, Expr> {
     alt((
+        expr_float_lit, // Must come before int_lit to properly parse floats
         expr_int_lit,
-        expr_float_lit,
         expr_bool_lit,
+        expr_char_lit,
         expr_string_lit,
         expr_call_or_var,
         delimited(
@@ -304,8 +305,25 @@ fn expr_primary(input: &str) -> IResult<&str, Expr> {
 /// Parse integer literal
 fn expr_int_lit(input: &str) -> IResult<&str, Expr> {
     let (input, num) = recognize(pair(opt(char('-')), digit1))(input)?;
+    let (input, suffix) = opt(alt((
+        tag("i8"), tag("i16"), tag("i32"), tag("i64"),
+        tag("u8"), tag("u16"), tag("u32"), tag("u64"),
+    )))(input)?;
+    
     let value = num.parse::<i64>().unwrap();
-    Ok((input, Expr::new(ExprKind::IntLit(value))))
+    let ty = suffix.map(|s| match s {
+        "i8" => Type::I8,
+        "i16" => Type::I16,
+        "i32" => Type::I32,
+        "i64" => Type::I64,
+        "u8" => Type::U8,
+        "u16" => Type::U16,
+        "u32" => Type::U32,
+        "u64" => Type::U64,
+        _ => Type::I32,
+    });
+    
+    Ok((input, Expr::new(ExprKind::IntLit(value, ty))))
 }
 
 /// Parse float literal
@@ -316,8 +334,16 @@ fn expr_float_lit(input: &str) -> IResult<&str, Expr> {
         char('.'),
         digit1,
     )))(input)?;
+    let (input, suffix) = opt(alt((tag("f32"), tag("f64"))))(input)?;
+    
     let value = num.parse::<f64>().unwrap();
-    Ok((input, Expr::new(ExprKind::FloatLit(value))))
+    let ty = suffix.map(|s| match s {
+        "f32" => Type::F32,
+        "f64" => Type::F64,
+        _ => Type::F64,
+    });
+    
+    Ok((input, Expr::new(ExprKind::FloatLit(value, ty))))
 }
 
 /// Parse boolean literal
@@ -336,6 +362,28 @@ fn expr_string_lit(input: &str) -> IResult<&str, Expr> {
         char('"')
     )(input)?;
     Ok((input, Expr::new(ExprKind::StringLit(s.to_string()))))
+}
+
+/// Parse char literal
+fn expr_char_lit(input: &str) -> IResult<&str, Expr> {
+    let (input, c) = delimited(
+        char('\''),
+        alt((
+            // Escape sequences
+            map(preceded(char('\\'), alt((
+                value('\\', char('\\')),
+                value('\'', char('\'')),
+                value('"', char('"')),
+                value('\n', char('n')),
+                value('\r', char('r')),
+                value('\t', char('t')),
+            ))), |ch| ch),
+            // Regular character
+            nom::character::complete::none_of("'"),
+        )),
+        char('\'')
+    )(input)?;
+    Ok((input, Expr::new(ExprKind::CharLit(c))))
 }
 
 /// Parse function call or variable reference

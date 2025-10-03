@@ -37,6 +37,9 @@ impl CodeGen {
             format!("scoreboard objectives add {}_obj dummy", self.namespace),
             format!("scoreboard objectives add {}_temp dummy", self.namespace),
             format!("data merge storage {}:vars {{}}", self.namespace),
+            "# Constants for overflow wrapping".to_string(),
+            format!("scoreboard players set #const256 {}_temp 256", self.namespace),
+            format!("scoreboard players set #const65536 {}_temp 65536", self.namespace),
         ];
         self.functions.insert("load".to_string(), load_commands);
 
@@ -80,23 +83,50 @@ impl CodeGen {
 
     fn generate_expr(&mut self, expr: &Expr, commands: &mut Vec<String>) -> Result<String, CompileError> {
         match &expr.kind {
-            ExprKind::IntLit(val) => {
+            ExprKind::IntLit(val, explicit_ty) => {
                 // Store literal in a temporary scoreboard
                 let temp = self.get_temp();
                 commands.push(format!(
                     "scoreboard players set {} {}_temp {}",
                     temp, self.namespace, val
                 ));
+                
+                // Apply overflow wrapping for small types if needed
+                if let Some(ty) = explicit_ty {
+                    self.apply_overflow_wrapping(&temp, ty, commands);
+                }
+                
                 Ok(temp)
             }
 
-            ExprKind::FloatLit(val) => {
-                // Store float in NBT
+            ExprKind::FloatLit(val, explicit_ty) => {
+                // Check if this should be stored in fast storage (scaled int)
+                if let Some(ty_info) = &expr.ty {
+                    if let Type::Fast(_inner, Some(scale)) = ty_info {
+                        // Fast float: store as scaled integer in scoreboard
+                        let scaled_val = (val * (*scale as f64)) as i64;
+                        let temp = self.get_temp();
+                        commands.push(format!(
+                            "scoreboard players set {} {}_temp {}",
+                            temp, self.namespace, scaled_val
+                        ));
+                        return Ok(temp);
+                    }
+                }
+                
+                // Regular NBT storage for floats
                 let temp = format!("temp_{}", self.temp_counter);
                 self.temp_counter += 1;
+                
+                // Determine NBT type suffix
+                let suffix = match explicit_ty {
+                    Some(Type::F32) => "f",
+                    _ => "d", // f64 or default
+                };
+                
                 commands.push(format!(
-                    "data modify storage {}:vars {} set value {}",
-                    self.namespace, temp, val
+                    "data modify storage {}:vars {} set value {}{}",
+                    self.namespace, temp, val, suffix
                 ));
                 Ok(temp)
             }
@@ -278,7 +308,69 @@ impl CodeGen {
             result, self.namespace, op_symbol, right_var, self.namespace
         ));
         
+        // Apply overflow wrapping if the result type is a small integer
+        if let Some(ty) = &left.ty {
+            self.apply_overflow_wrapping(&result, ty, commands);
+        }
+        
         Ok(result)
+    }
+
+    fn apply_overflow_wrapping(&self, var: &str, ty: &Type, commands: &mut Vec<String>) {
+        // Unwrap Fast types to get the inner type
+        let base_ty = match ty {
+            Type::Fast(inner, _) => inner.as_ref(),
+            _ => ty,
+        };
+        
+        match base_ty {
+            Type::I8 => {
+                // i8: (-128..127) wrap with: +128, %256, -128
+                commands.push(format!(
+                    "scoreboard players add {} {}_temp 128",
+                    var, self.namespace
+                ));
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp %= #const256 {}_temp",
+                    var, self.namespace, self.namespace
+                ));
+                commands.push(format!(
+                    "scoreboard players remove {} {}_temp 128",
+                    var, self.namespace
+                ));
+            }
+            Type::U8 => {
+                // u8: (0..255) wrap with: %256
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp %= #const256 {}_temp",
+                    var, self.namespace, self.namespace
+                ));
+            }
+            Type::I16 => {
+                // i16: (-32768..32767) wrap with: +32768, %65536, -32768
+                commands.push(format!(
+                    "scoreboard players add {} {}_temp 32768",
+                    var, self.namespace
+                ));
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp %= #const65536 {}_temp",
+                    var, self.namespace, self.namespace
+                ));
+                commands.push(format!(
+                    "scoreboard players remove {} {}_temp 32768",
+                    var, self.namespace
+                ));
+            }
+            Type::U16 => {
+                // u16: (0..65535) wrap with: %65536
+                commands.push(format!(
+                    "scoreboard players operation {} {}_temp %= #const65536 {}_temp",
+                    var, self.namespace, self.namespace
+                ));
+            }
+            // i32, u32, i64, u64 don't need wrapping in scoreboards (i32 is native, others use NBT)
+            _ => {}
+        }
     }
 
     fn get_temp(&mut self) -> String {

@@ -50,6 +50,19 @@ pub enum CompileWarning {
         name: String,
         line: usize,
     },
+    SlowParsing {
+        message: String,
+        line: usize,
+    },
+    NegativeToUnsigned {
+        from: String,
+        to: String,
+        line: usize,
+    },
+    ConsiderFast {
+        var: String,
+        line: usize,
+    },
 }
 
 impl CompileWarning {
@@ -62,7 +75,7 @@ impl CompileWarning {
                 )
             }
             CompileWarning::FastFloatApproximation { var, line } => {
-                format!("Line {}: Warning: Fast float '{}' uses approximation; precision not guaranteed", line, var)
+                format!("Line {}: Warning: Fast float '{}' uses approximation; precision may be lost", line, var)
             }
             CompileWarning::MixedStorage { line } => {
                 format!(
@@ -72,6 +85,21 @@ impl CompileWarning {
             }
             CompileWarning::UnusedVariable { name, line } => {
                 format!("Line {}: Warning: Unused variable '{}'", line, name)
+            }
+            CompileWarning::SlowParsing { message, line } => {
+                format!("Line {}: Warning: {}", line, message)
+            }
+            CompileWarning::NegativeToUnsigned { from, to, line } => {
+                format!(
+                    "Line {}: Warning: Casting negative {} to {} - value may be invalid",
+                    line, from, to
+                )
+            }
+            CompileWarning::ConsiderFast { var, line } => {
+                format!(
+                    "Line {}: Consider using 'fast {}' for better performance in loops",
+                    line, var
+                )
             }
         }
     }
